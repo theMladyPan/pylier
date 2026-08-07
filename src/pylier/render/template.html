@@ -146,6 +146,9 @@
     white-space: pre-wrap; word-break: break-all; margin: 4px 0;
   }
   .controls label { display: block; font-size: 13px; margin: 6px 0; cursor: pointer; }
+  .edge-mode { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: center; margin: 8px 0; font-size: 12px; }
+  .edge-mode > span { width: 100%; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  .edge-mode label { margin: 0; }
   .controls .btns { display: flex; gap: 8px; margin-top: 8px; }
   .controls button {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--panel-border);
@@ -236,6 +239,11 @@
       </section>
       <section class="controls">
         <h2>View</h2>
+        <div class="edge-mode" role="group" aria-label="Edge routing">
+          <span>Edges</span>
+          <label><input type="radio" name="edge-mode" value="rectilinear" checked /> Rectilinear</label>
+          <label><input type="radio" name="edge-mode" value="direct" /> Direct</label>
+        </div>
         <label><input type="checkbox" id="c-labels" checked /> Show edge labels</label>
         <label><input type="checkbox" id="c-anim" checked /> Animate execution</label>
         <div class="btns">
@@ -359,7 +367,7 @@ if (LIVE) {
   es.onerror = () => { es.close(); };
 }
 
-let state = { showLabels: true, animate: true, selected: null, tagFilter: new Set(), tagMode: "any" };
+let state = { showLabels: true, animate: true, edgeMode: "rectilinear", selected: null, tagFilter: new Set(), tagMode: "any" };
 // nodes currently executing (enter seen, exit not) — drives the status stripe
 const active = new Set();
 
@@ -633,13 +641,21 @@ function update() {
   else { state.selected = null; clearHighlight(); }
 }
 
+function edgeRoute(d) {
+  return state.edgeMode === "direct" ? directRoute(d) : linkRoute(d);
+}
+
+function redrawEdges() {
+  if (linkSel) linkSel.attr("d", d => edgeRoute(d).path);
+  if (labelSel) labelSel
+    .attr("x", d => edgeRoute(d).x)
+    .attr("y", d => edgeRoute(d).y - 7);
+}
+
 sim.on("tick", () => {
-  if (linkSel) linkSel.attr("d", d => linkRoute(d).path);
+  redrawEdges();
   if (nodeSel) nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
   if (startSel) startSel.attr("transform", d => `translate(${d.x},${d.y})`);
-  if (labelSel) labelSel
-    .attr("x", d => linkRoute(d).x)
-    .attr("y", d => linkRoute(d).y - 7);
 });
 
 // Rectilinear routing with rounded corners and a guaranteed straight terminal
@@ -671,6 +687,20 @@ function roundedPath(points) {
   }
   const last = points.at(-1);
   return `${path}L${last.x},${last.y}`;
+}
+
+function directCardPoint(node, dx, dy, pad) {
+  const extent = Math.max(Math.abs(dx) / (nodeW(node) / 2 + pad), Math.abs(dy) / (NH / 2 + pad));
+  return { x: node.x + dx / extent, y: node.y + dy / extent };
+}
+
+function directRoute(d) {
+  const s = d.source, t = d.target;
+  const dx = t.x - s.x, dy = t.y - s.y;
+  if (Math.hypot(dx, dy) < 0.001) return { path: `M${s.x},${s.y}L${t.x},${t.y}`, x: s.x, y: s.y };
+  const start = directCardPoint(s, dx, dy, ROUTE.sourcePad);
+  const end = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
+  return { path: `M${start.x},${start.y}L${end.x},${end.y}`, x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
 }
 
 function linkRoute(d) {
@@ -881,6 +911,13 @@ function fit() {
   svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }
 
+function setEdgeMode(mode, persist = true) {
+  state.edgeMode = mode === "direct" ? "direct" : "rectilinear";
+  d3.selectAll('input[name="edge-mode"]').property("checked", function () { return this.value === state.edgeMode; });
+  if (persist) try { localStorage.setItem("pylier-edge-mode", state.edgeMode); } catch { /* private mode */ }
+  redrawEdges();
+}
+
 d3.select("#b-fit").on("click", () => setTimeout(fit, 600));
 d3.select("#b-reset").on("click", () => {
   state.selected = null; clearHighlight();
@@ -888,6 +925,7 @@ d3.select("#b-reset").on("click", () => {
 });
 d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
 d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
+d3.selectAll('input[name="edge-mode"]').on("change", e => setEdgeMode(e.target.value));
 d3.selectAll('input[name="tag-mode"]').on("change", e => { state.tagMode = e.target.value; update(); });
 
 const main = document.getElementById("main");
@@ -947,6 +985,7 @@ function applyTheme(t) {
     .style("stroke", edgeStroke);
 }
 const savedTheme = (() => { try { return localStorage.getItem("pylier-theme") || "dark"; } catch { return "dark"; } })();
+const savedEdgeMode = (() => { try { return localStorage.getItem("pylier-edge-mode") || "rectilinear"; } catch { return "rectilinear"; } })();
 const savedSidebarWidth = (() => {
   try {
     const stored = localStorage.getItem("pylier-sidebar-width");
@@ -956,6 +995,7 @@ const savedSidebarWidth = (() => {
 const savedFiltersCollapsed = (() => { try { return localStorage.getItem("pylier-filters-collapsed") === "true"; } catch { return false; } })();
 const savedSidebarCollapsed = (() => { try { return localStorage.getItem("pylier-sidebar-collapsed") === "true"; } catch { return false; } })();
 if (Number.isFinite(savedSidebarWidth)) setSidebarWidth(savedSidebarWidth, false);
+setEdgeMode(savedEdgeMode, false);
 setFilterCollapsed(savedFiltersCollapsed, false);
 setSidebarCollapsed(savedSidebarCollapsed, false);
 applyTheme(savedTheme);

@@ -229,6 +229,10 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "sim.alpha(prevNodeIds.size ? 0.12 : 0.65).restart()" in html
     assert "trace-start" in html
     assert "traceStartNode" in html
+    assert 'name="edge-mode"' in html
+    assert "directRoute" in html
+    assert 'state.edgeMode === "direct" ? directRoute(d) : linkRoute(d)' in html
+    assert "pylier-edge-mode" in html
     assert 'class="foot-note"' not in html
     assert "payload_kind" not in html
 
