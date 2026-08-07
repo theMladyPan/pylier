@@ -164,6 +164,45 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert len(graph["links"]) == 1
 
 
+def test_render_embedded_data_block_is_valid_json(tmp_path: Path):
+    """The file://-fallback embedded-data block must be valid JSON and the guard
+    literal must not collide with the injected payload. Regression: the
+    placeholder substring appeared inside a JS string literal and broke the
+    whole script with 'Unexpected identifier'."""
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+
+    @pylier.node
+    def a():
+        return {"name": "doc"}
+
+    @pylier.node
+    def b(doc):
+        return doc["name"]
+
+    with pylier.trace("fallback") as tr:
+        b(a())
+
+    out = pylier.render(tmp_path / "out.html", trace=tr)
+    html = out.read_text(encoding="utf-8")
+    m = re.search(r'<script id="embedded-data"[^>]*>(.*?)</script>', html, re.S)
+    assert m, "embedded-data block missing"
+    embedded = json.loads(m.group(1))
+    assert embedded["name"] == "fallback"
+    # the main inline script must be syntactically valid JS (no token leakage)
+    scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+    assert scripts, "inline script missing"
+    if not shutil.which("node"):
+        return  # node not available in this env; JSON checks above still ran
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(scripts[-1])
+        js_path = f.name
+    r = subprocess.run(["node", "--check", js_path], capture_output=True, text=True)
+    assert r.returncode == 0, f"inline JS invalid: {r.stderr}"
+
+
 def test_trace_isolation_between_contexts():
     @pylier.node
     def f():

@@ -102,6 +102,10 @@ tooling without an explicit decision.
   async would force a rewrite. Packaging stays light (src layout, hatchling,
   pydantic-settings) so publishing later is a flip, not a migration.
 
+## Rules for this file
+- if anything changes you are obligated to edit the paragraph/section so it match the implementation (prevent stale information at all costs)
+- reference instead of duplicate: if there is a section in code which describes it perfectly, reference the code instead of duplicating information here
+
 ## Architecture map
 
 ```
