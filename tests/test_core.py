@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
+import socket
 from pathlib import Path
 
 import pytest
 
 import pylier
+from pylier.model import Level, Node, Trace
 
 
 def test_sync_edge_inferred_from_returned_value():
@@ -233,6 +236,12 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "directRoute" in html
     assert 'state.edgeMode === "direct" ? directRoute(d) : linkRoute(d)' in html
     assert "pylier-edge-mode" in html
+    assert 'id="b-console"' in html
+    assert 'id="event-console"' in html
+    assert "SSE_LOG_LIMIT = 100" in html
+    assert "logSseEvent" in html
+    assert "requestAnimationFrame(flushSseLog)" in html
+    assert "pylier-console-collapsed" in html
     assert 'class="foot-note"' not in html
     assert "payload_kind" not in html
 
@@ -443,6 +452,32 @@ def test_events_timeline_and_edge_handoffs():
     graph = tr.to_graph_dict()
     assert [ev["kind"] for ev in graph["events"]] == kinds
     assert graph["events"][2]["edges"] == consume_enter.edges
+
+
+def test_sse_latency_update_does_not_emit_empty_exec_batches():
+    trace = Trace("sse-latency")
+    trace.get_or_create_node(Node(id="latency", name="latency", module="tests", level=Level.INFO))
+    server = pylier.serve(trace=trace, port=0, open_browser=False)
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=0.2)
+    try:
+        connection.request("GET", "/events")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.readline() == b"event: graph\n"
+        while response.readline() != b"\n":
+            pass
+
+        trace.record_latency("latency", 1.5)
+        # A latency-only update can send one keepalive, but must not begin an
+        # unbounded stream of empty ``event: exec`` frames.
+        assert response.readline() == b": heartbeat\n"
+        assert response.readline() == b"\n"
+        with pytest.raises((TimeoutError, socket.timeout)):
+            response.readline()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
 
 
 def test_versions_split_topology_vs_execution():

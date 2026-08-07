@@ -107,33 +107,40 @@ def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
             self.send_header("Connection", "keep-alive")
             self.end_headers()
             graph_since = -1  # forces an immediate full-graph send on connect
-            exec_since = 0
+            exec_version_since = 0
+            event_index_since = 0
             try:
                 while True:
-                    graph_v, exec_v = captured_trace.wait_for_change(graph_since, exec_since, timeout=_SSE_HEARTBEAT)
+                    graph_v, exec_v = captured_trace.wait_for_change(
+                        graph_since, exec_version_since, timeout=_SSE_HEARTBEAT
+                    )
                     wrote = False
                     if graph_v > graph_since:
                         payload = json.dumps(captured_trace.to_graph_dict(), default=str)
                         self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
                         graph_since = graph_v
                         wrote = True
-                    if exec_v > exec_since:
-                        total, new_events = captured_trace.events_since(exec_since)
-                        batch = json.dumps(
-                            [
-                                {
-                                    "ts": ev.ts,
-                                    "node_id": ev.node_id,
-                                    "kind": ev.kind,
-                                    "edges": ev.edges,
-                                }
-                                for ev in new_events
-                            ],
-                            default=str,
-                        )
-                        self.wfile.write(f"event: exec\ndata: {batch}\n\n".encode())
-                        exec_since = total
-                        wrote = True
+                    if exec_v > exec_version_since:
+                        event_index_since, new_events = captured_trace.events_since(event_index_since)
+                        # Latency updates advance the execution version without adding a
+                        # timeline event. Advance its cursor either way; otherwise the
+                        # server would spin forever emitting empty ``exec`` batches.
+                        exec_version_since = exec_v
+                        if new_events:
+                            batch = json.dumps(
+                                [
+                                    {
+                                        "ts": ev.ts,
+                                        "node_id": ev.node_id,
+                                        "kind": ev.kind,
+                                        "edges": ev.edges,
+                                    }
+                                    for ev in new_events
+                                ],
+                                default=str,
+                            )
+                            self.wfile.write(f"event: exec\ndata: {batch}\n\n".encode())
+                            wrote = True
                     if wrote:
                         self.wfile.flush()
                     else:

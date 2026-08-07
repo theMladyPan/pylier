@@ -99,7 +99,7 @@
   #main.filters-collapsed { grid-template-columns: 34px minmax(0, 1fr) var(--sidebar-w); }
   #main.sidebar-collapsed { grid-template-columns: var(--filter-w) minmax(0, 1fr) 34px; }
   #main.filters-collapsed.sidebar-collapsed { grid-template-columns: 34px minmax(0, 1fr) 34px; }
-  #graph-wrap { position: relative; min-width: 0; display: flex; flex-direction: column; }
+  #graph-wrap { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   #graph {
     flex: 1; min-width: 0; min-height: 0; height: auto; background: var(--bg);
     background-image: radial-gradient(var(--dot) .7px, transparent .7px);
@@ -166,10 +166,23 @@
   .filter-mode { display: flex; gap: 12px; margin-top: 12px; font-size: 12px; }
   .filter-mode label { cursor: pointer; }
   #footer {
-    flex: 0 0 34px; min-width: 0; padding: 0 16px; border-top: 1px solid var(--panel-border); background: var(--panel-2);
-    display: flex; justify-content: center; align-items: center; gap: 14px; overflow-x: auto; white-space: nowrap;
-    color: var(--muted); font-size: 10px;
+    flex: 0 0 34px; min-width: 0; border-top: 1px solid var(--panel-border); background: var(--panel-2);
+    color: var(--muted); font-size: 10px; overflow: hidden;
   }
+  #footer.console-open { flex-basis: 190px; display: flex; flex-direction: column; }
+  .footer-bar { flex: 0 0 34px; min-width: 0; padding: 0 16px; display: flex; justify-content: center; align-items: center; gap: 14px; overflow-x: auto; white-space: nowrap; }
+  .footer-legend { display: flex; justify-content: center; align-items: center; gap: 14px; }
+  .console-toggle, .console-clear { background: transparent; color: var(--muted); border: 0; padding: 2px 4px; cursor: pointer; font: 10px var(--mono); }
+  .console-toggle { margin-left: auto; }
+  .console-toggle:hover, .console-clear:hover { color: var(--text); }
+  #event-console { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--panel-border); background: var(--bg); }
+  .console-head { flex: 0 0 28px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--panel-border); color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  .console-clear { margin-left: auto; text-transform: none; letter-spacing: 0; }
+  #event-log { flex: 1; min-height: 0; overflow: auto; padding: 7px 12px; font: 11px/1.55 var(--mono); }
+  .console-entry { display: flex; gap: 10px; white-space: nowrap; }
+  .console-entry time { color: var(--muted); }
+  .console-entry .event-kind { color: var(--accent); min-width: 40px; }
+  .console-empty { color: var(--muted); font-style: italic; }
   .type-key { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
   .type-key i { width: 12px; height: 2px; display: inline-block; }
   .type-key .bool { background: var(--type-bool); }.type-key .int { background: var(--type-int); }
@@ -255,12 +268,21 @@
   </aside>
   <div id="graph-wrap">
     <svg id="graph"></svg>
-    <footer id="footer" aria-label="Payload type legend">
-      <span class="type-key"><i class="bool"></i>bool</span><span class="type-key"><i class="int"></i>int</span>
-      <span class="type-key"><i class="float"></i>float</span><span class="type-key"><i class="str"></i>str</span>
-      <span class="type-key"><i class="list"></i>list</span><span class="type-key"><i class="dict"></i>dict</span>
-      <span class="type-key"><i class="tuple"></i>set / tuple</span><span class="type-key"><i class="binary"></i>binary</span>
-      <span class="type-key"><i class="other"></i>other</span>
+    <footer id="footer" aria-label="Payload type legend and SSE event console">
+      <div class="footer-bar">
+        <div class="footer-legend" aria-label="Payload type legend">
+          <span class="type-key"><i class="bool"></i>bool</span><span class="type-key"><i class="int"></i>int</span>
+          <span class="type-key"><i class="float"></i>float</span><span class="type-key"><i class="str"></i>str</span>
+          <span class="type-key"><i class="list"></i>list</span><span class="type-key"><i class="dict"></i>dict</span>
+          <span class="type-key"><i class="tuple"></i>set / tuple</span><span class="type-key"><i class="binary"></i>binary</span>
+          <span class="type-key"><i class="other"></i>other</span>
+        </div>
+        <button class="console-toggle" id="b-console" type="button" aria-controls="event-console" aria-expanded="false">SSE console ▲</button>
+      </div>
+      <section id="event-console" aria-label="Incoming SSE events" hidden>
+        <div class="console-head"><span>Incoming SSE events</span><button class="console-clear" id="b-console-clear" type="button">Clear</button></div>
+        <div id="event-log" role="log" aria-live="polite"></div>
+      </section>
     </footer>
   </div>
   <aside id="sidebar" aria-label="Run and details">
@@ -359,11 +381,87 @@ function loadData() {
 // Live mode: SSE push (graph on topology change, exec batches in real time).
 // Static files fall back to the embedded data + a one-shot timeline replay.
 const LIVE = location.protocol.startsWith("http") && !location.href.startsWith("file:");
+const SSE_LOG_LIMIT = 100;
+const sseLog = [];
+const pendingSseLog = [];
+let sseLogFlushScheduled = false;
+
+function formatSseTime(date) {
+  return date.toLocaleTimeString([], { hour12: false }) + `.${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+
+function summarizeSseEvent(kind, payload) {
+  if (kind === "graph") return `${payload.nodes?.length || 0} nodes · ${payload.links?.length || 0} handoffs`;
+  const events = Array.isArray(payload) ? payload : [];
+  const names = events.slice(0, 3).map(event => `${event.kind}:${String(event.node_id || "unknown").split(".").at(-1)}`).join(", ");
+  return `${events.length} execution event${events.length === 1 ? "" : "s"}${names ? ` · ${names}` : ""}`;
+}
+
+function consoleLine(entry) {
+  const line = document.createElement("div");
+  line.className = "console-entry";
+  const time = document.createElement("time");
+  time.textContent = entry.time;
+  const kind = document.createElement("span");
+  kind.className = "event-kind";
+  kind.textContent = entry.kind;
+  const summary = document.createElement("span");
+  summary.textContent = entry.summary;
+  line.append(time, kind, summary);
+  return line;
+}
+
+function renderSseLog() {
+  const log = document.getElementById("event-log");
+  log.replaceChildren();
+  if (!sseLog.length) {
+    const empty = document.createElement("div");
+    empty.className = "console-empty";
+    empty.textContent = LIVE ? "Waiting for incoming SSE events…" : "Available in a live HTTP viewer.";
+    log.append(empty);
+    return;
+  }
+  log.append(...sseLog.map(consoleLine));
+  log.scrollTop = log.scrollHeight;
+}
+
+function flushSseLog() {
+  sseLogFlushScheduled = false;
+  if (!pendingSseLog.length) return;
+  const log = document.getElementById("event-log");
+  log.querySelector(".console-empty")?.remove();
+  const fragment = document.createDocumentFragment();
+  for (const entry of pendingSseLog.splice(0)) fragment.append(consoleLine(entry));
+  log.append(fragment);
+  while (log.children.length > sseLog.length) log.firstElementChild?.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+function logSseEvent(kind, payload) {
+  const entry = { time: formatSseTime(new Date()), kind, summary: summarizeSseEvent(kind, payload) };
+  sseLog.push(entry);
+  pendingSseLog.push(entry);
+  if (sseLog.length > SSE_LOG_LIMIT) sseLog.shift();
+  if (!sseLogFlushScheduled) {
+    sseLogFlushScheduled = true;
+    requestAnimationFrame(flushSseLog);
+  }
+}
+
 let liveData = null;
 if (LIVE) {
   const es = new EventSource("/events");
-  es.addEventListener("graph", (e) => { liveData = JSON.parse(e.data); update(); });
-  es.addEventListener("exec", (e) => { playEvents(JSON.parse(e.data)); });
+  es.addEventListener("graph", (e) => {
+    const graph = JSON.parse(e.data);
+    logSseEvent("graph", graph);
+    liveData = graph;
+    update();
+  });
+  es.addEventListener("exec", (e) => {
+    const events = JSON.parse(e.data);
+    logSseEvent("exec", events);
+    playEvents(events);
+  });
   es.onerror = () => { es.close(); };
 }
 
@@ -931,6 +1029,9 @@ d3.selectAll('input[name="tag-mode"]').on("change", e => { state.tagMode = e.tar
 const main = document.getElementById("main");
 const filters = document.getElementById("filters");
 const sidebar = document.getElementById("sidebar");
+const footer = document.getElementById("footer");
+const eventConsole = document.getElementById("event-console");
+const consoleToggle = document.getElementById("b-console");
 function resizeGraph() {
   w = svg.node().clientWidth; h = svg.node().clientHeight;
   svg.attr("viewBox", `0 0 ${w} ${h}`);
@@ -957,8 +1058,18 @@ function setSidebarWidth(width, persist = true) {
   if (persist) try { localStorage.setItem("pylier-sidebar-width", String(bounded)); } catch { /* private mode */ }
   resizeGraph();
 }
+function setConsoleCollapsed(collapsed, persist = true) {
+  footer.classList.toggle("console-open", !collapsed);
+  eventConsole.hidden = collapsed;
+  consoleToggle.setAttribute("aria-expanded", String(!collapsed));
+  consoleToggle.textContent = collapsed ? "SSE console ▲" : "SSE console ▼";
+  if (persist) try { localStorage.setItem("pylier-console-collapsed", String(collapsed)); } catch { /* private mode */ }
+  setTimeout(resizeGraph, 0);
+}
 d3.select("#b-filters").on("click", () => setFilterCollapsed(!filters.classList.contains("filter-collapsed")));
 d3.select("#b-sidebar").on("click", () => setSidebarCollapsed(!sidebar.classList.contains("sidebar-collapsed")));
+d3.select("#b-console").on("click", () => setConsoleCollapsed(!eventConsole.hidden));
+d3.select("#b-console-clear").on("click", () => { sseLog.length = 0; pendingSseLog.length = 0; renderSseLog(); });
 const resizeHandle = document.getElementById("sidebar-resize");
 resizeHandle.addEventListener("pointerdown", event => {
   event.preventDefault();
@@ -994,10 +1105,13 @@ const savedSidebarWidth = (() => {
 })();
 const savedFiltersCollapsed = (() => { try { return localStorage.getItem("pylier-filters-collapsed") === "true"; } catch { return false; } })();
 const savedSidebarCollapsed = (() => { try { return localStorage.getItem("pylier-sidebar-collapsed") === "true"; } catch { return false; } })();
+const savedConsoleCollapsed = (() => { try { return localStorage.getItem("pylier-console-collapsed") !== "false"; } catch { return true; } })();
 if (Number.isFinite(savedSidebarWidth)) setSidebarWidth(savedSidebarWidth, false);
 setEdgeMode(savedEdgeMode, false);
 setFilterCollapsed(savedFiltersCollapsed, false);
 setSidebarCollapsed(savedSidebarCollapsed, false);
+setConsoleCollapsed(savedConsoleCollapsed, false);
+renderSseLog();
 applyTheme(savedTheme);
 d3.select("#b-theme").on("click", () => {
   const cur = document.documentElement.getAttribute("data-theme") || "dark";
