@@ -24,6 +24,10 @@
     --edge-telemetry: #d29922;
     --edge-code: #2f81f7;
     --fire: #2f81f7;
+    --st-busy: #2f81f7;   /* sync executing */
+    --st-wait: #d29922;   /* async waiting */
+    --st-idle: #3fb950;   /* idle / completed */
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   [data-theme="light"] {
     /* GitHub light */
@@ -43,124 +47,204 @@
     --edge-telemetry: #9a6700;
     --edge-code: #0969da;
     --fire: #0969da;
+    --st-busy: #0969da;
+    --st-wait: #9a6700;
+    --st-idle: #1a7f37;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-family: var(--mono);
     display: flex; flex-direction: column;
   }
-  #header { padding: 8px 14px; border-bottom: 1px solid var(--panel-border); display:flex; gap:14px; align-items:center; }
-  #header h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing:-.02em; }
-  #header .meta { color: var(--muted); font-size: 12px; }
+  /* monospace dark header with breadcrumbs + run metadata + theme toggle */
+  #header {
+    height: 56px; padding: 0 18px; border-bottom: 1px solid var(--panel-border);
+    display: flex; align-items: center; gap: 12px; background: var(--panel-2);
+  }
+  #header h1 { font: 700 16px var(--mono); margin: 0; letter-spacing: -.02em; }
+  #header .slash { color: var(--muted); }
+  #header .crumb { color: var(--muted); font-size: 13px; }
+  #header .crumb b { color: var(--text); font-weight: 600; }
+  #header .stamp {
+    border: 1px solid var(--panel-border); border-radius: 4px; padding: 3px 7px;
+    font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  }
+  #header .stamp.live { color: var(--st-idle); border-color: var(--st-idle); }
+  #header .stamp.done { color: var(--accent); border-color: var(--accent); }
   #header .spacer { flex: 1; }
-  #header .theme-btn { background: var(--panel-2); color: var(--text); border:1px solid var(--panel-border); border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px; }
+  #header .dur { font-size: 13px; color: var(--muted); }
+  #header .theme-btn {
+    background: var(--panel-bg); color: var(--text); border: 1px solid var(--panel-border);
+    border-radius: 6px; padding: 5px 10px; cursor: pointer; font: 12px var(--mono);
+  }
   #header .theme-btn:hover { border-color: var(--accent); }
-  #main { flex: 1; display: flex; min-height: 0; }
-  #graph { flex: 1; background: var(--bg); background-image: radial-gradient(var(--dot) .7px, transparent .7px); background-size: 18px 18px; }
-  #sidebar { width: 320px; border-left: 1px solid var(--panel-border); background: var(--panel-bg); overflow:auto; padding: 12px; }
-  #sidebar h2 { font-size: 11px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing:.1em; }
-  .panel { border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; margin-bottom: 12px; background: var(--panel-2); }
-  .panel label { display:block; font-size: 13px; margin: 6px 0; cursor:pointer; }
-  .panel button { background: var(--panel-2); color: var(--text); border:1px solid var(--panel-border); border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
-  .panel button:hover { border-color: var(--accent); }
-  #details .row { margin: 4px 0; font-size: 13px; }
-  #details .row .k { color: var(--muted); }
-  #details .edges { margin-top: 6px; }
-  #details .edge-line { font-size: 12px; color: var(--text); margin: 2px 0; }
-  #details .edge-line .arr { color: var(--accent); }
+
+  #main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 320px; min-height: 0; }
+  #graph {
+    min-width: 0; background: var(--bg);
+    background-image: radial-gradient(var(--dot) .7px, transparent .7px);
+    background-size: 18px 18px;
+  }
+  svg { width: 100%; height: 100%; display: block; }
+  .flow-note {
+    position: absolute; left: 16px; bottom: 12px; padding: 6px 9px;
+    background: var(--panel-2); border: 1px solid var(--panel-border);
+    font-size: 10px; color: var(--muted); pointer-events: none;
+  }
+
+  #sidebar {
+    border-left: 1px solid var(--panel-border); background: var(--panel-bg);
+    overflow: auto; padding: 0;
+  }
+  #sidebar section { padding: 16px; border-bottom: 1px solid var(--panel-border); }
+  #sidebar h2 { font-size: 10px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .13em; }
+  .summary .row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px dotted var(--panel-border); font-size: 13px; }
+  .summary .row:last-child { border: 0; }
+  .summary .row span:first-child { color: var(--muted); }
+  .summary .row b { font-weight: 600; }
   #details .empty { color: var(--muted); font-style: italic; font-size: 13px; }
-  svg { width: 100%; height: 100%; display:block; }
+  #details .drow { margin: 5px 0; font-size: 13px; display: grid; grid-template-columns: 78px 1fr; gap: 6px; }
+  #details .drow .k { color: var(--muted); }
+  #details .drow .v { word-break: break-word; }
+  #details .edges { margin-top: 8px; }
+  #details .edge-line { font-size: 12px; margin: 2px 0; }
+  #details .edge-line .arr { color: var(--accent); }
+  #details pre.value {
+    background: var(--bg); border: 1px solid var(--panel-border); border-radius: 6px;
+    padding: 6px; font: 11px var(--mono); max-height: 240px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all; margin: 4px 0;
+  }
+  .controls label { display: block; font-size: 13px; margin: 6px 0; cursor: pointer; }
+  .controls .btns { display: flex; gap: 8px; margin-top: 8px; }
+  .controls button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--panel-border);
+    border-radius: 6px; padding: 6px 10px; cursor: pointer; font: 12px var(--mono);
+  }
+  .controls button:hover { border-color: var(--accent); }
+  .legend .key { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+  .legend .key i { display: inline-block; width: 20px; height: 0; border-top: 2px solid; }
+  .legend .key i.dashed { border-top-style: dashed; }
+  .legend .key i.dotted { border-top-style: dotted; }
+  .legend .key i.dashdot { border-top-style: dashed; border-top-width: 2px; }
+  .legend .key .dotsw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:0; }
+
+  /* node cards: monochrome, dynamic width, status stripe */
+  .node { cursor: grab; }
+  .node:active { cursor: grabbing; }
   .node rect.body { fill: var(--card); stroke: var(--node-stroke); stroke-width: 1; }
   .node:hover rect.body { stroke: var(--accent); stroke-width: 1.5; }
-  .node text { font-size: 12px; pointer-events: none; }
-  .node .name { fill: var(--ink); font-weight: 650; }
+  .node rect.status { stroke: none; }
+  .node text { pointer-events: none; font-family: var(--mono); }
+  .node .num { font-size: 9px; fill: var(--muted); }
+  .node .name { font-size: 13px; font-weight: 700; fill: var(--ink); }
+  .node .module { font-size: 10px; fill: var(--muted); }
+  .node .lat { font-size: 10px; fill: var(--ink); text-anchor: end; }
+  .node .lat .avg { fill: var(--muted); }
   .node .badge { font-size: 10px; fill: var(--muted); }
+
   .link { fill: none; opacity: .8; }
   .link.highlighted { opacity: 1; stroke-width: 3px; }
   .link.dimmed { opacity: .12; }
   .link.firing { opacity: 1; stroke-width: 4px; filter: drop-shadow(0 0 6px var(--fire)); }
   .node.dimmed { opacity: .15; }
-  .node.pulsing rect.body { animation: node-pulse 0.7s ease-in-out infinite; stroke: var(--accent); }
+  .node.pulsing rect.body { stroke: var(--st-busy); animation: node-pulse 0.7s ease-in-out infinite; }
+  .node.pulsing.async rect.body { stroke: var(--st-wait); }
   @keyframes node-pulse {
-    0%, 100% { stroke-width: 1.5px; filter: drop-shadow(0 0 2px var(--accent)); }
-    50% { stroke-width: 3px; filter: drop-shadow(0 0 10px var(--accent)); }
+    0%, 100% { stroke-width: 1.5px; filter: drop-shadow(0 0 2px currentColor); }
+    50% { stroke-width: 3px; filter: drop-shadow(0 0 10px currentColor); }
   }
-  .edge-label { font-size: 10px; fill: var(--muted); pointer-events:none; paint-order: stroke; stroke: var(--bg); stroke-width: 5px; }
-  #details pre.value { background: var(--bg); border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px; font-size: 11px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
-  .legend-swatch { display:inline-block; width:18px; height:0; vertical-align: middle; margin-right:8px; border-top: 2px solid; }
+  .edge-label { font-size: 9px; fill: var(--muted); pointer-events: none; text-anchor: middle; paint-order: stroke; stroke: var(--bg); stroke-width: 5px; }
 </style>
 </head>
 <body>
 <div id="header">
   <h1>pylier</h1>
-  <span class="meta" id="graph-meta"></span>
+  <span class="slash">/</span>
+  <span class="crumb"><b id="h-name">{{NAME}}</b></span>
+  <span class="stamp" id="h-stamp">live</span>
   <span class="spacer"></span>
+  <span class="dur" id="h-dur"></span>
   <button class="theme-btn" id="b-theme">☀ light</button>
 </div>
 <div id="main">
-  <svg id="graph"></svg>
+  <div style="position:relative; min-width:0;">
+    <svg id="graph"></svg>
+    <div class="flow-note">force-directed · rectilinear edges w/ rounded corners · arrow tangent to node border</div>
+  </div>
   <div id="sidebar">
-    <div class="panel" id="controls">
-      <h2>Controls</h2>
+    <section class="summary" id="summary">
+      <h2>Run summary</h2>
+      <div class="row"><span>nodes</span><b id="s-nodes">0</b></div>
+      <div class="row"><span>handoffs</span><b id="s-handoffs">0</b></div>
+      <div class="row"><span>duration</span><b id="s-dur">—</b></div>
+      <div class="row"><span>trace</span><b id="s-trace">—</b></div>
+    </section>
+    <section id="details">
+      <h2>Details</h2>
+      <div class="empty">Click a node or edge to inspect.</div>
+    </section>
+    <section class="controls">
+      <h2>View</h2>
       <label><input type="checkbox" id="c-telemetry" checked /> Show telemetry edges</label>
       <label><input type="checkbox" id="c-code" checked /> Show code-dep edges</label>
       <label><input type="checkbox" id="c-labels" /> Show edge labels</label>
-      <label><input type="checkbox" id="c-anim" checked /> Animate data flow</label>
-      <button id="b-fit">Fit view</button>
-      <button id="b-reset">Reset selection</button>
-    </div>
-    <div class="panel" id="legend">
-      <h2>Legend</h2>
-      <div><span class="legend-swatch" style="border-top-color:var(--edge-data)"></span>data</div>
-      <div><span class="legend-swatch" style="border-top-color:var(--edge-control);border-top-style:dashed"></span>trigger / job</div>
-      <div><span class="legend-swatch" style="border-top-color:var(--edge-telemetry);border-top-style:dotted"></span>telemetry</div>
-      <div><span class="legend-swatch" style="border-top-color:var(--edge-code);border-top-style:dashdot"></span>code dep</div>
-    </div>
-    <div class="panel" id="details">
-      <h2>Details</h2>
-      <div class="empty">Click a node to inspect.</div>
-    </div>
+      <label><input type="checkbox" id="c-anim" checked /> Animate execution</label>
+      <div class="btns">
+        <button id="b-fit">Fit view</button>
+        <button id="b-reset">Reset</button>
+      </div>
+    </section>
+    <section class="legend">
+      <h2>Semantics</h2>
+      <div class="key"><i style="border-top-color:var(--edge-data)"></i> data</div>
+      <div class="key"><i class="dashed" style="border-top-color:var(--edge-control)"></i> trigger / job</div>
+      <div class="key"><i class="dotted" style="border-top-color:var(--edge-telemetry)"></i> telemetry</div>
+      <div class="key"><i class="dashdot" style="border-top-color:var(--edge-code)"></i> code dep</div>
+      <div class="key" style="margin-top:10px"><span class="dotsw" style="background:var(--st-busy)"></span> sync busy</div>
+      <div class="key"><span class="dotsw" style="background:var(--st-wait)"></span> async waiting</div>
+      <div class="key"><span class="dotsw" style="background:var(--st-idle)"></span> idle / done</div>
+    </section>
   </div>
 </div>
 
 <script id="embedded-data" type="application/json">__PYLIER_GRAPH_JSON__</script>
 <script>
 const RAW = __PYLIER_GRAPH__;
-// payload_kind -> stroke style (from PoC)
-const STROKE = {
-  data: "solid",
-  trigger: "dashed",
-  job: "dashed",
-  telemetry: "dotted",
-  code: "dashdot",
-  unknown: "solid",
-};
-const STROKE_DASH = {
-  solid: "none",
-  dashed: "8 4",
-  dotted: "2 4",
-  dashdot: "8 4 2 4",
-};
-// edge color by payload kind (resolves CSS vars so theme toggle recolors live)
+
+// payload_kind -> stroke style + color token
+const STROKE = { data: "solid", trigger: "dashed", job: "dashed", telemetry: "dotted", code: "dashdot", unknown: "solid" };
+const STROKE_DASH = { solid: "none", dashed: "8 4", dotted: "2 4", dashdot: "8 4 2 4" };
 const KIND_COLOR = {
-  data: "var(--edge-data)",
-  trigger: "var(--edge-control)",
-  job: "var(--edge-control)",
-  telemetry: "var(--edge-telemetry)",
-  code: "var(--edge-code)",
-  unknown: "var(--edge-data)",
+  data: "var(--edge-data)", trigger: "var(--edge-control)", job: "var(--edge-control)",
+  telemetry: "var(--edge-telemetry)", code: "var(--edge-code)", unknown: "var(--edge-data)",
+};
+// solid fill used by the per-kind arrow markers (CSS vars don't work inside
+// <marker> fills reliably across browsers, so we resolve concrete colors).
+const KIND_FILL = {
+  dark: { data: "#7d8590", trigger: "#a371f7", job: "#a371f7", telemetry: "#d29922", code: "#2f81f7", unknown: "#7d8590" },
+  light: { data: "#57606a", trigger: "#8250df", job: "#8250df", telemetry: "#9a6700", code: "#0969da", unknown: "#57606a" },
 };
 function kindColorOf(d) { return KIND_COLOR[d._kind] || KIND_COLOR.unknown; }
+function kindFillOf(d) {
+  const t = document.documentElement.getAttribute("data-theme") || "dark";
+  return (KIND_FILL[t] || KIND_FILL.dark)[d._kind] || (KIND_FILL[t] || KIND_FILL.dark).unknown;
+}
 
-// node card geometry: width grows with the label, height is fixed.
-// Hoisted so both the collide force and the edge router share it.
-const NH = 40; // node half-height*2
-function nodeW(d) { return Math.max(120, (d.name || "").length * 7); }
+// node card geometry: width grows with the longer of name/module (+ room for
+// the right-aligned latency). Hoisted so collide force + edge router share it.
+const NH = 64;
+function nodeW(d) {
+  const longest = Math.max((d.name || "").length, (d.category || "").length);
+  return Math.max(176, longest * 7.2 + 56);
+}
+function fmtMs(v) {
+  if (v == null) return null;
+  return v < 1 ? v.toFixed(2) : v < 100 ? Math.round(v) + "" : Math.round(v) + "";
+}
 
-// resolve payload_kind from an edge: prefer explicit tags, else map type heuristics
 function payloadKind(edge) {
   if (edge.tags && edge.tags.payload_kind) return edge.tags.payload_kind;
   const p = (edge.payload || "").toLowerCase();
@@ -176,63 +260,64 @@ function loadData() {
   const el = document.getElementById("embedded-data");
   const txt = el.textContent.trim();
   if (txt.startsWith("{")) return JSON.parse(txt);
-  return { nodes: [], links: [], categories: [], dataTypes: [] };
+  return { nodes: [], links: [], categories: [], dataTypes: [], events: [] };
 }
 
-// Live mode: if a /graph endpoint is reachable (live viewer server), subscribe
-// to Server-Sent Events and re-render only when the trace actually changes —
-// no fixed-interval polling, so a stable pipeline produces zero redundant
-// renders and a growing one updates without cold-restarting the layout.
-// Static files have no such endpoint and fall back to the embedded data above.
+// Live mode: SSE push (graph on topology change, exec batches in real time).
+// Static files fall back to the embedded data + a one-shot timeline replay.
 const LIVE = location.protocol.startsWith("http") && !location.href.startsWith("file:");
 let liveData = null;
 if (LIVE) {
   const es = new EventSource("/events");
   es.addEventListener("graph", (e) => { liveData = JSON.parse(e.data); update(); });
-  // exec events carry the real execution timing: enter -> pulse the node and
-  // fire its inbound edges (data handoffs); exit -> stop the pulse
   es.addEventListener("exec", (e) => { playEvents(JSON.parse(e.data)); });
-  es.onerror = () => { es.close(); }; // best effort; page keeps the last snapshot
+  es.onerror = () => { es.close(); };
 }
 
 let state = { showTelemetry: true, showCode: true, showLabels: false, animate: true, selected: null };
+// nodes currently executing (enter seen, exit not) — drives the status stripe
+const active = new Set();
 
 // ---------------------------------------------------------------------------
 // Persistent graph: SVG, zoom, layers and the force simulation are created
-// ONCE and kept alive for the page lifetime. ``update()`` joins new data into
-// the existing simulation instead of tearing it down, so live polling no longer
-// cold-restarts the layout (the source of the 1.5s tearing).
+// ONCE and kept alive. update() joins new data into the existing simulation
+// instead of tearing it down, so live additions don't cold-restart the layout.
 // ---------------------------------------------------------------------------
 const svg = d3.select("#graph");
 let w = svg.node().clientWidth, h = svg.node().clientHeight;
 svg.attr("viewBox", `0 0 ${w} ${h}`);
-
 const root = svg.append("g");
 const zoom = d3.zoom().scaleExtent([0.2, 4]).on("zoom", (e) => root.attr("transform", e.transform));
 svg.call(zoom);
 
-// one-time arrow marker — context-stroke makes the arrowhead adopt each
-// edge's color (and follow the theme); userSpaceOnUse keeps its size constant
-// even while a firing edge thickens.
-svg.append("defs").selectAll("marker")
-  .data(["arrow"]).enter().append("marker")
-  .attr("id", "arrow").attr("viewBox", "0 -4 8 8").attr("refX", 7).attr("refY", 0)
-  .attr("markerWidth", 7).attr("markerHeight", 7).attr("orient", "auto")
-  .attr("markerUnits", "userSpaceOnUse")
-  .append("path").attr("d", "M0,-4L8,0L0,4Z").attr("fill", "context-stroke");
+const defs = svg.append("defs");
+// per-kind arrow markers (mockup style): concrete fill so the head matches the
+// edge color; markerUnits=userSpaceOnUse keeps the head a constant size while a
+// firing edge thickens. Recreated on theme toggle (see applyTheme).
+function buildMarkers() {
+  defs.selectAll("marker").remove();
+  const kinds = ["data", "trigger", "job", "telemetry", "code", "unknown"];
+  kinds.forEach(k => {
+    const m = defs.append("marker")
+      .attr("id", `arrow-${k}`).attr("viewBox", "0 -4 8 8").attr("refX", 7).attr("refY", 0)
+      .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
+      .attr("markerUnits", "userSpaceOnUse");
+    m.append("path").attr("d", "M0,-4L8,0L0,4Z")
+      .attr("fill", KIND_FILL[document.documentElement.getAttribute("data-theme") || "dark"][k]);
+  });
+}
 
 const linksG = root.append("g").attr("class", "links");
 const labelsG = root.append("g").attr("class", "labels");
 const nodesG = root.append("g").attr("class", "nodes");
 
 const sim = d3.forceSimulation()
-  .force("link", d3.forceLink().id(d => d.id).distance(260).strength(0.4))
-  .force("charge", d3.forceManyBody().strength(-1100))
+  .force("link", d3.forceLink().id(d => d.id).distance(240).strength(0.38))
+  .force("charge", d3.forceManyBody().strength(-900).distanceMax(700))
   .force("center", d3.forceCenter(w / 2, h / 2))
-  .force("collide", d3.forceCollide().radius(d => nodeW(d) / 2 + 24))
-  .alphaDecay(0.025); // settle a bit slower for smoother live additions
+  .force("collide", d3.forceCollide().radius(d => nodeW(d) / 2 + 28).iterations(2))
+  .alphaDecay(0.025);
 
-// live state (mutated by update(); read by the persistent tick handler)
 let nodeData = [];
 let linkData = [];
 let nodeSel = null, linkSel = null, labelSel = null;
@@ -247,38 +332,50 @@ function neighbors(id) {
   return set;
 }
 
-// spawn new nodes near an already-placed neighbor instead of at the center,
-// so live additions don't collapse the whole layout
-function spawnPosition(nodeId, prevById, data) {
+// spawn new nodes near an already-placed neighbor (live) else on a spread grid
+function spawnPosition(nodeId, prevById, data, idx, total) {
   for (const l of data.links) {
     const other = l.source === nodeId ? l.target : l.target === nodeId ? l.source : null;
     if (other && prevById.has(other)) {
       const p = prevById.get(other);
-      return { x: p.x + (Math.random() - 0.5) * 40, y: p.y + (Math.random() - 0.5) * 40 };
+      return { x: p.x + (Math.random() - 0.5) * 50, y: p.y + (Math.random() - 0.5) * 50 };
     }
   }
-  return { x: w / 2 + (Math.random() - 0.5) * 80, y: h / 2 + (Math.random() - 0.5) * 80 };
+  // initial spread: a loose grid so the first layout isn't a collapsed blob
+  const cols = Math.ceil(Math.sqrt(total || 1));
+  const c = idx % cols, r = Math.floor(idx / cols);
+  return { x: w / 2 + (c - cols / 2) * 220, y: h / 2 + (r - cols / 2) * 140 };
+}
+
+function statusColor(d) {
+  if (active.has(d.id)) return d.is_async ? "var(--st-wait)" : "var(--st-busy)";
+  return "var(--st-idle)";
 }
 
 function update() {
   const data = loadData();
-  document.getElementById("graph-meta").textContent =
-    `${data.nodes.length} nodes · ${data.links.length} edges · ${data.name || ""}`;
+  // header + summary
+  d3.select("#h-name").text(data.name || "trace");
+  d3.select("#s-nodes").text(data.nodes.length);
+  d3.select("#s-handoffs").text(data.handoffs || 0);
+  const totalMs = data.total_ms || 0;
+  d3.select("#s-dur").text(totalMs ? `${totalMs.toFixed(1)} ms` : "—");
+  d3.select("#h-dur").text(totalMs ? `${(totalMs / 1000).toFixed(2)} s total` : "");
+  const stamp = d3.select("#h-stamp");
+  stamp.classed("live", !!LIVE).classed("done", !LIVE).text(LIVE ? "live" : "completed");
+  const tid = runId(data);
+  d3.select("#s-trace").text(tid);
 
-  // --- nodes: keep positions for persistent ids, spawn fresh ones near a neighbor ---
   const prevById = new Map(nodeData.map(n => [n.id, n]));
   const prevNodeIds = new Set(prevById.keys());
-
-  const fresh = data.nodes.map(d => {
+  const fresh = data.nodes.map((d, i) => {
     const prev = prevById.get(d.id);
-    if (prev) return Object.assign(prev, d); // keep x,y,vx,vy
-    const sp = spawnPosition(d.id, prevById, data);
+    if (prev) return Object.assign(prev, d);
+    const sp = spawnPosition(d.id, prevById, data, i, data.nodes.length);
     return Object.assign({}, d, { x: sp.x, y: sp.y });
   });
   const nodeById = new Map(fresh.map(n => [n.id, n]));
 
-  // --- links: filter by visibility + validity, tag each with a stable index
-  // so the rectilinear router can fan parallel edges apart. ---
   const links = data.links
     .map((l, i) => ({ ...l, _kind: payloadKind(l), _idx: i }))
     .filter(l => {
@@ -287,7 +384,6 @@ function update() {
       return nodeById.has(l.source) && nodeById.has(l.target);
     });
 
-  // --- detect topology change so we only reheat when the graph actually moved ---
   const newNodeIds = new Set(fresh.map(n => n.id));
   const addedNodes = [...newNodeIds].filter(id => !prevNodeIds.has(id)).length;
   const removedNodes = [...prevNodeIds].filter(id => !newNodeIds.has(id)).length;
@@ -301,46 +397,68 @@ function update() {
   nodeData = fresh;
   linkData = links;
 
-  // --- node join (enter/update/exit) keyed by id ---
+  // --- node join ---
   const nodeJoin = nodesG.selectAll("g.node").data(fresh, d => d.id);
   nodeJoin.exit().remove();
   const nodeEnter = nodeJoin.enter().append("g")
-    .attr("class", "node")
+    .attr("class", d => "node" + (d.is_async ? " async" : ""))
     .call(d3.drag()
       .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
       .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
       .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
-  nodeEnter.append("rect").attr("class", "body").attr("rx", 6).attr("ry", 6).attr("height", NH).attr("y", -NH / 2);
-  nodeEnter.append("text").attr("class", "name").attr("y", -2);
-  nodeEnter.append("text").attr("class", "badge").attr("y", 12);
+  nodeEnter.append("rect").attr("class", "body").attr("rx", 3).attr("ry", 3).attr("height", NH).attr("y", -NH / 2);
+  nodeEnter.append("rect").attr("class", "status").attr("x", d => -nodeW(d) / 2).attr("y", -NH / 2).attr("width", 5).attr("height", NH).attr("fill", statusColor);
+  nodeEnter.append("text").attr("class", "num").attr("y", -18);
+  nodeEnter.append("text").attr("class", "name").attr("y", -1);
+  nodeEnter.append("text").attr("class", "module").attr("y", 15);
+  nodeEnter.append("text").attr("class", "lat").attr("y", -18);
+  nodeEnter.append("text").attr("class", "badge").attr("y", 15);
   nodeEnter.on("click", (e, d) => { state.selected = d.id; highlight(d); renderDetails(d); });
 
   nodeSel = nodeJoin.merge(nodeEnter);
-  nodeSel.select("rect.body")
-    .attr("width", nodeW)
-    .attr("x", d => -nodeW(d) / 2);
+  nodeSel.attr("class", d => "node" + (d.is_async ? " async" : "") + (active.has(d.id) ? " pulsing" : "") + (d.is_async && active.has(d.id) ? " async" : ""));
+  nodeSel.select("rect.body").attr("width", nodeW).attr("x", d => -nodeW(d) / 2);
+  nodeSel.select("rect.status")
+    .attr("x", d => -nodeW(d) / 2).attr("height", NH).attr("y", -NH / 2)
+    .attr("fill", statusColor);
+  nodeSel.select("text.num")
+    .text((d, i) => String(i + 1).padStart(2, "0"))
+    .attr("x", d => -nodeW(d) / 2 + 14);
   nodeSel.select("text.name")
     .text(d => d.name)
-    .attr("x", d => -nodeW(d) / 2 + 10);
+    .attr("x", d => -nodeW(d) / 2 + 14);
+  nodeSel.select("text.module")
+    .text(d => d.module || d.category || "")
+    .attr("x", d => -nodeW(d) / 2 + 14);
+  nodeSel.select("text.lat")
+    .each(function (d) {
+      const sel = d3.select(this);
+      const last = fmtMs(d.last_ms);
+      const avg = fmtMs(d.avg_ms);
+      sel.text("");
+      if (last != null) {
+        sel.append("tspan").text(`${last} ms`);
+        if (avg != null && avg !== last) sel.append("tspan").attr("class", "avg").text(` [${avg}]`);
+      }
+    })
+    .attr("x", d => nodeW(d) / 2 - 10);
   nodeSel.select("text.badge")
-    .text(d => `${d.category} · ${d.calls || 0}×`)
-    .attr("x", d => -nodeW(d) / 2 + 10);
+    .text(d => `${d.calls || 0}×`)
+    .attr("x", d => nodeW(d) / 2 - 10);
 
-  // --- link join keyed by source|target|kind (model dedupes edges per pair) ---
+  // --- link join (per-kind marker-end) ---
   const linkJoin = linksG.selectAll("path.link").data(links, linkKey);
   linkJoin.exit().remove();
   linkSel = linkJoin.enter().append("path")
     .attr("class", "link")
-    .attr("marker-end", "url(#arrow)")
     .merge(linkJoin)
+    .attr("marker-end", d => `url(#arrow-${d._kind})`)
     .style("stroke", kindColorOf)
     .attr("stroke-width", d => 1.5 + Math.min(3, (d.count || 1) * 0.4))
     .style("stroke-dasharray", d => STROKE_DASH[STROKE[d._kind]])
     .style("cursor", "pointer");
-  // click an edge to inspect the data that flows across it
   linkSel.on("click", (e, d) => { e.stopPropagation(); renderEdgeDetails(d); });
 
-  // --- edge labels ---
   const labelJoin = labelsG.selectAll("text.edge-label").data(links, linkKey);
   labelJoin.exit().remove();
   labelSel = labelJoin.enter().append("text")
@@ -349,19 +467,14 @@ function update() {
     .style("display", state.showLabels ? null : "none")
     .merge(labelJoin);
 
-  // --- feed the persistent simulation the new node/link arrays ---
   sim.nodes(fresh);
   sim.force("link").links(links);
-
-  // reheat gently only when the graph actually changed; otherwise leave it settled
   if (topologyChanged) sim.alpha(Math.min(1, sim.alpha() + 0.3)).restart();
 
-  // re-apply selection highlight if a node is still present
   if (state.selected && nodeById.has(state.selected)) highlight(nodeById.get(state.selected));
   else { state.selected = null; clearHighlight(); }
 }
 
-// persistent tick handler — reads the live selections set by update()
 sim.on("tick", () => {
   if (linkSel) linkSel.attr("d", d => linkRoute(d).path);
   if (nodeSel) nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
@@ -370,16 +483,15 @@ sim.on("tick", () => {
     .attr("y", d => linkRoute(d).y - 7);
 });
 
-// Rectilinear (orthogonal) edge routing with rounded corners. Both endpoints
-// are clipped to the node card border (+ a small arrow pad on the target) so
-// the arrowhead — oriented via marker orient="auto" along the final, axis-
-// aligned segment — sits tangent to the border. Parallel edges between the
-// same pair fan apart using the stable per-edge _idx for an elbow offset.
+// Rectilinear (orthogonal) edge routing with rounded corners. Endpoints clip
+// to the node card border (+ arrow pad on the target) so the per-kind arrowhead
+// (orient=auto) sits tangent to the border it enters. Parallel edges fan apart
+// by stable per-edge index.
 function linkRoute(d) {
   const s = d.source, t = d.target;
   const sw = nodeW(s) / 2, tw = nodeW(t) / 2, hh = NH / 2;
   const dx = t.x - s.x, dy = t.y - s.y;
-  const sp = 2, ap = 8; // start pad, arrow pad
+  const sp = 2, ap = 8;
   if (Math.abs(dx) >= Math.abs(dy)) {
     const sh = Math.sign(dx) || 1, sv = Math.sign(dy) || 0;
     const ex = s.x + sh * (sw + sp), ey = s.y, tx2 = t.x - sh * (tw + ap), ty = t.y;
@@ -397,21 +509,15 @@ function linkRoute(d) {
   if (Math.abs(dx) < 8) return { path: `M${ex},${ey}V${ty}`, x: ex, y: (ey + ty) / 2 };
   return { path: `M${ex},${ey}V${my - sv * r}Q${ex},${my} ${ex + sh * r},${my}H${tx2 - sh * r}Q${tx2},${my} ${tx2},${my + sv * r}V${ty}`, x: (ex + tx2) / 2, y: my };
 }
-// linkPath kept as a thin string accessor for external callers (highlight etc.)
-function linkPath(d) { return linkRoute(d).path; }
 
-// --- execution animation: node pulse (enter->exit) and edge fire (handoff) ---
-// Events arrive live via SSE or are replayed once from the embedded timeline
-// in static HTML. The edge "fire" is a quick decaying glow; the node pulses
-// from when it receives data until it emits its result.
+// --- execution animation: node pulse (enter->exit) + edge fire (handoff) ---
 function nodeByIdNow(id) { return nodeData.find(n => n.id === id) || null; }
 
 function bumpCalls(id) {
   const n = nodeByIdNow(id);
   if (!n) return;
   n.calls = (n.calls || 0) + 1;
-  if (nodeSel) nodeSel.filter(d => d.id === id).select("text.badge")
-    .text(d => `${d.category} · ${d.calls || 0}×`);
+  if (nodeSel) nodeSel.filter(d => d.id === id).select("text.badge").text(d => `${d.calls || 0}×`);
 }
 
 function fireEdge(source, target) {
@@ -431,13 +537,18 @@ function fireEdge(source, target) {
 }
 
 function pulseStart(id) {
-  if (nodeSel) nodeSel.filter(d => d.id === id).classed("pulsing", true);
+  active.add(id);
+  if (nodeSel) nodeSel.filter(d => d.id === id)
+    .classed("pulsing", true)
+    .select("rect.status").attr("fill", d => statusColor(d));
 }
 function pulseStop(id) {
-  if (nodeSel) nodeSel.filter(d => d.id === id).classed("pulsing", false);
+  active.delete(id);
+  if (nodeSel) nodeSel.filter(d => d.id === id)
+    .classed("pulsing", false)
+    .select("rect.status").attr("fill", d => statusColor(d));
 }
 
-// process a batch of exec events (live) — events arrive in ts order already
 function playEvents(events) {
   if (!state.animate) return;
   for (const ev of events) applyEvent(ev);
@@ -452,14 +563,11 @@ function applyEvent(ev) {
   }
 }
 
-// static HTML: replay the embedded timeline once, at capped real-time gaps so
-// a 3s pipeline replays in ~seconds, not the original wall-clock time
 function replayTimeline(events) {
   if (!state.animate || !events || !events.length) return;
-  let t = 200; // small lead-in
-  let prev = events[0].ts;
+  let t = 200, prev = events[0].ts;
   for (const ev of events) {
-    const gap = Math.min(Math.max((ev.ts - prev) * 1000, 80), 900); // 80..900ms
+    const gap = Math.min(Math.max((ev.ts - prev) * 1000, 80), 900);
     prev = ev.ts;
     const at = t;
     setTimeout(() => applyEvent(ev), at);
@@ -482,47 +590,58 @@ function clearHighlight() {
 function renderDetails(d) {
   const det = d3.select("#details");
   det.html("");
-  det.append("h2").text("Details");
-  det.append("div").attr("class", "row").html(`<span class="k">node:</span> ${d.name}`);
-  det.append("div").attr("class", "row").html(`<span class="k">module:</span> ${d.category}`);
-  det.append("div").attr("class", "row").html(`<span class="k">calls:</span> ${d.calls || 0}`);
-  if (d.tags && Object.keys(d.tags).length) {
-    det.append("div").attr("class", "row").html(`<span class="k">tags:</span> ${JSON.stringify(d.tags)}`);
+  det.append("h2").text("Node");
+  det.append("div").attr("class", "drow").html(`<span class="k">name</span><span class="v">${d.name}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">module</span><span class="v">${d.module || d.category || ""}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">calls</span><span class="v">${d.calls || 0}×</span>`);
+  if (d.last_ms != null) {
+    const avg = d.avg_ms != null && fmtMs(d.avg_ms) !== fmtMs(d.last_ms) ? ` · avg ${fmtMs(d.avg_ms)} ms` : "";
+    det.append("div").attr("class", "drow").html(`<span class="k">latency</span><span class="v">${fmtMs(d.last_ms)} ms${avg}</span>`);
   }
+  det.append("div").attr("class", "drow").html(`<span class="k">kind</span><span class="v">${d.is_async ? "async" : "sync"}</span>`);
+  const st = active.has(d.id) ? (d.is_async ? "async waiting" : "sync busy") : "idle / done";
+  det.append("div").attr("class", "drow").html(`<span class="k">status</span><span class="v">${st}</span>`);
+  if (d.tags && Object.keys(d.tags).length)
+    det.append("div").attr("class", "drow").html(`<span class="k">tags</span><span class="v">${JSON.stringify(d.tags)}</span>`);
   const inb = linkData.filter(l => (l.target.id || l.target) === d.id);
   const outb = linkData.filter(l => (l.source.id || l.source) === d.id);
   const box = det.append("div").attr("class", "edges");
-  box.append("div").attr("class", "row").html(`<span class="k">inbound (${inb.length})</span>`);
+  box.append("div").attr("class", "drow").html(`<span class="k">in (${inb.length})</span><span class="v"></span>`);
   inb.forEach(l => box.append("div").attr("class", "edge-line")
-    .html(`${l.source.id || l.source} <span class="arr">→</span> ${d.id} · ${l.payload || ""}`));
-  box.append("div").attr("class", "row").html(`<span class="k">outbound (${outb.length})</span>`);
+    .html(`${(nodeByIdNow(l.source.id || l.source)?.name) || (l.source.id || l.source)} <span class="arr">→</span> ${d.name} · ${l.payload || ""}`));
+  box.append("div").attr("class", "drow").html(`<span class="k">out (${outb.length})</span><span class="v"></span>`);
   outb.forEach(l => box.append("div").attr("class", "edge-line")
-    .html(`${d.id} <span class="arr">→</span> ${l.target.id || l.target} · ${l.payload || ""}`));
+    .html(`${d.name} <span class="arr">→</span> ${(nodeByIdNow(l.target.id || l.target)?.name) || (l.target.id || l.target)} · ${l.payload || ""}`));
 }
 
-// inspect the data flowing across a clicked edge. Shows metadata always; the
-// full serialized payload when capture_values was enabled, else the preview.
 function renderEdgeDetails(l) {
   const src = l.source.id || l.source, tgt = l.target.id || l.target;
   const srcName = nodeByIdNow(src)?.name || src, tgtName = nodeByIdNow(tgt)?.name || tgt;
   const det = d3.select("#details");
   det.html("");
   det.append("h2").text("Edge");
-  det.append("div").attr("class", "row").html(`<span class="arr">${srcName} → ${tgtName}</span>`);
-  det.append("div").attr("class", "row").html(`<span class="k">payload:</span> ${l.payload || ""}`);
-  if (l.size != null) det.append("div").attr("class", "row").html(`<span class="k">size:</span> ${l.size}`);
-  det.append("div").attr("class", "row").html(`<span class="k">count:</span> ${l.count || 1}×`);
+  det.append("div").attr("class", "drow").html(`<span class="k">flow</span><span class="v">${srcName} → ${tgtName}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">payload</span><span class="v">${l.payload || ""}</span>`);
+  if (l.size != null) det.append("div").attr("class", "drow").html(`<span class="k">size</span><span class="v">${l.size}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">count</span><span class="v">${l.count || 1}×</span>`);
   if (l.tags && Object.keys(l.tags).length)
-    det.append("div").attr("class", "row").html(`<span class="k">tags:</span> ${JSON.stringify(l.tags)}`);
+    det.append("div").attr("class", "drow").html(`<span class="k">tags</span><span class="v">${JSON.stringify(l.tags)}</span>`);
   if (l.value != null) {
-    det.append("div").attr("class", "row").html(`<span class="k">value:</span>`);
+    det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.value);
   } else if (l.preview != null) {
-    det.append("div").attr("class", "row").html(`<span class="k">preview:</span>`);
+    det.append("div").attr("class", "drow").html(`<span class="k">preview</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.preview);
   } else {
-    det.append("div").attr("class", "row").html('<span class="k">value:</span> <i>not captured — set PYLIER_CAPTURE_VALUES=1 or run at level "debug" for a preview</i>');
+    det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"><i>not captured — set PYLIER_CAPTURE_VALUES=1 or run at level "debug" for a preview</i></span>`);
   }
+}
+
+function runId(data) {
+  const seed = `${data.name || ""}|${(data.nodes || []).length}|${(data.links || []).length}`;
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return h.toString(16).slice(0, 6);
 }
 
 function fit() {
@@ -537,18 +656,19 @@ function fit() {
 d3.select("#b-fit").on("click", () => setTimeout(fit, 600));
 d3.select("#b-reset").on("click", () => {
   state.selected = null; clearHighlight();
-  d3.select("#details").html('<h2>Details</h2><div class="empty">Click a node to inspect.</div>');
+  d3.select("#details").html('<h2>Details</h2><div class="empty">Click a node or edge to inspect.</div>');
 });
 d3.select("#c-telemetry").on("change", e => { state.showTelemetry = e.target.checked; update(); });
 d3.select("#c-code").on("change", e => { state.showCode = e.target.checked; update(); });
 d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
 d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
 
-// light/dark theme toggle (GitHub palettes). Applied before the first render so
-// the SVG picks up the right CSS vars; preference persists across sessions.
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
   d3.select("#b-theme").text(t === "dark" ? "☀ light" : "☾ dark");
+  buildMarkers(); // per-kind marker fills track the theme
+  // re-stroke edges so existing paths pick up the new palette
+  if (linkSel) linkSel.attr("marker-end", d => `url(#arrow-${d._kind})`);
 }
 const savedTheme = (() => { try { return localStorage.getItem("pylier-theme") || "dark"; } catch { return "dark"; } })();
 applyTheme(savedTheme);
@@ -566,11 +686,8 @@ window.addEventListener("resize", () => {
   sim.alpha(0.1).restart();
 });
 
-// initial render + auto-fit once the layout has had a moment to settle
 update();
 setTimeout(fit, 600);
-// static HTML (file://): replay the execution timeline once so the recorded
-// fire/pulse sequence shows what actually ran
 if (!LIVE) replayTimeline(loadData().events);
 </script>
 </body>

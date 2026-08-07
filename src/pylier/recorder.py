@@ -65,6 +65,7 @@ class NodeMeta:
     module: str
     level: Level
     tags: dict[str, str]
+    is_async: bool = False
 
 
 def current_trace() -> Trace:
@@ -157,6 +158,7 @@ def _make_node(meta: NodeMeta) -> Node:
         module=meta.module,
         level=meta.level,
         tags=dict(meta.tags),
+        is_async=meta.is_async,
     )
 
 
@@ -194,8 +196,14 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> Non
     trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="enter", edges=fired))
 
 
-def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | None) -> None:
-    """Register the return value (for downstream inference) and emit the exit."""
+def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | None, ms: float | None = None) -> None:
+    """Register the return value (for downstream inference) and emit the exit.
+
+    ``ms`` is the wall-clock duration of this call (when known); it updates the
+    node's latest/average latency so the renderer can show ``38 ms`` cards.
+    """
+    if ms is not None:
+        trace.record_latency(meta.id, ms)
     if exc is not None:
         trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="exit"))
         _emit(trace, meta, result=None, return_type=None)
@@ -252,6 +260,7 @@ def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: 
         return func(*args, **kwargs)
     trace = current_trace()
     record_enter(trace, meta, args, kwargs)
+    start = time.perf_counter()
     result: Any = None
     exc: BaseException | None = None
     try:
@@ -261,7 +270,7 @@ def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: 
         exc = caught
         raise
     finally:
-        record_exit(trace, meta, result, exc)
+        record_exit(trace, meta, result, exc, (time.perf_counter() - start) * 1000.0)
 
 
 async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]], args: tuple, kwargs: dict) -> T:
@@ -270,6 +279,7 @@ async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]]
         return await func(*args, **kwargs)
     trace = current_trace()
     record_enter(trace, meta, args, kwargs)
+    start = time.perf_counter()
     result: Any = None
     exc: BaseException | None = None
     try:
@@ -279,14 +289,16 @@ async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]]
         exc = caught
         raise
     finally:
-        record_exit(trace, meta, result, exc)
+        record_exit(trace, meta, result, exc, (time.perf_counter() - start) * 1000.0)
 
 
 def make_meta(func: Callable[..., Any], level: Level, tags: dict[str, str]) -> NodeMeta:
     module = getattr(func, "__module__", "unknown") or "unknown"
     name = getattr(func, "__qualname__", getattr(func, "__name__", "anonymous"))
     node_id = f"{module}.{name}"
-    return NodeMeta(id=node_id, name=name, module=module, level=level, tags=tags)
+    return NodeMeta(
+        id=node_id, name=name, module=module, level=level, tags=tags, is_async=inspect.iscoroutinefunction(func)
+    )
 
 
 def node_decorator(

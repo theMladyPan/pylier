@@ -42,6 +42,9 @@ class Node:
     level: Level = Level.INFO
     tags: dict[str, str] = field(default_factory=dict)
     calls: int = 0
+    is_async: bool = False
+    last_ms: float | None = None
+    avg_ms: float | None = None
 
 
 @dataclass
@@ -155,6 +158,24 @@ class Trace:
             # locally from exec events, so no graph push here
             return existing
 
+    def record_latency(self, node_id: str, ms: float) -> None:
+        """Update a node's latest call duration and running average.
+
+        Exec-version only (no topology change), so the live viewer streams the
+        updated latency via the next exec batch's embedded node snapshot.
+        """
+        with self._cond:
+            n = self.nodes.get(node_id)
+            if n is None:
+                return
+            n.last_ms = ms
+            # running average over observed calls
+            if n.avg_ms is None:
+                n.avg_ms = ms
+            else:
+                n.avg_ms = n.avg_ms + (ms - n.avg_ms) / max(1, n.calls)
+            self._bump_exec()
+
     def add_edge(
         self,
         source: str,
@@ -217,6 +238,9 @@ class Trace:
                         "env": [],
                         "tags": n.tags,
                         "calls": n.calls,
+                        "is_async": n.is_async,
+                        "last_ms": n.last_ms,
+                        "avg_ms": n.avg_ms,
                     }
                     for n in self.nodes.values()
                 ],
@@ -236,6 +260,8 @@ class Trace:
                 # execution timeline: drives the fire/pulse animation. Static
                 # renders replay this once on load; the live viewer receives the
                 # same events incrementally via SSE.
+                "total_ms": sum(n.last_ms or 0 for n in self.nodes.values()),
+                "handoffs": sum(e.count for e in self.edges.values()),
                 "events": [
                     {
                         "ts": ev.ts,
