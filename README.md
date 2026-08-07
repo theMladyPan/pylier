@@ -1,105 +1,122 @@
+<div align="center">
+
 # pylier
 
-Decorator-driven data process & pipeline visualization. Decorate functions as
-pipeline nodes; pylier infers edges from the data that flows between them and
-renders a force-directed graph (D3 v7, single-file HTML) or a live in-process
-viewer.
+### See the data moving through your Python pipeline.
 
-## Install
+<p>
+  Decorate the functions you already have. pylier infers the data handoffs and
+  renders the pipeline that actually ran—no graph DSL or manual edge wiring.
+</p>
+
+<p>
+  <a href="https://github.com/theMladyPan/pylier"><img src="https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.14+"></a>
+  <a href="https://github.com/theMladyPan/pylier"><img src="https://img.shields.io/github/stars/theMladyPan/pylier?style=social" alt="pylier GitHub stars"></a>
+  <img src="https://img.shields.io/badge/graph%20wiring-none-2ea44f" alt="No manual graph wiring">
+</p>
+
+<a href="examples/ingest.py">
+  <img src="assets/ingest-graph.png" alt="Interactive pylier graph of a branched document-ingestion pipeline" width="100%">
+</a>
+
+</div>
+
+## Why pylier?
+
+<table>
+<tr>
+<td width="33%" align="center">
+<b>Decorate, don't rebuild</b>
+<p>Mark ordinary sync or async functions with <code>@pylier.node</code>. Your application code remains the pipeline.</p>
+</td>
+<td width="33%" align="center">
+<b>Follow real data</b>
+<p>Edges are inferred from the values passed between stages, so the graph reflects execution instead of a hand-maintained diagram.</p>
+</td>
+<td width="33%" align="center">
+<b>Inspect it anywhere</b>
+<p>Write a self-contained HTML graph for sharing, or open a live in-process viewer while the pipeline runs.</p>
+</td>
+</tr>
+</table>
+
+## Quick start: document ingestion
+
+The [ingestion example](examples/ingest.py) is the fastest way to see pylier's
+value: a document branches into text and image paths, then converges at an
+indexing stage.
 
 ```bash
+git clone https://github.com/theMladyPan/pylier.git
+cd pylier
 uv sync
+uv run python -m examples.ingest html
 ```
 
-## Usage
+Open `pylier-ingest.html` in a browser. It is a self-contained file—no server
+required. To watch the graph grow as work happens instead:
+
+```bash
+uv run python -m examples.ingest serve
+# viewer: http://localhost:8765
+```
+
+## The whole API in one flow
 
 ```python
 import pylier
 
+
 @pylier.node
-def load(path: str) -> dict: ...
+def load_document(path: str) -> dict: ...
+
 
 @pylier.node(_tags=["document", "text"])
-def extract(doc: dict) -> list[str]: ...
+def extract_text(document: dict) -> list[str]: ...
+
 
 @pylier.node
 def embed(chunks: list[str]) -> list[dict]: ...
 
-with pylier.trace("ingest"):
-    vecs = embed(extract(load("doc.pdf")))
 
-pylier.render("out.html")   # self-contained HTML, open from file://
-pylier.serve()              # live viewer at http://localhost:8765
+with pylier.trace("document-ingest"):
+    document = load_document("report.pdf")
+    vectors = embed(extract_text(document))
+
+pylier.render("document-ingest.html")  # interactive, standalone HTML
 ```
 
-Edges are inferred by value fingerprinting: a node's return value is hashed and
-remembered; when a later node receives a matching argument, an edge is drawn.
-No manual wiring.
-
-### Capture levels
+A returned value that later becomes a function argument creates an edge. For a
+plain-Python transformation or join that loses that relationship, preserve its
+sources explicitly:
 
 ```python
-@pylier.node(level="debug")
-def detail(): ...
-
-with pylier.set_level("debug"):   # core < info < debug < trace
-    ...
+vectors = pylier.derive(text_vectors + image_vectors, from_=[text_vectors, image_vectors])
 ```
 
-Levels (`core` < `info` < `debug` < `trace`) control both which nodes are
-captured and how much payload metadata (type, size, preview) is recorded.
+`derive()` returns the original value unchanged; its only job is to keep the
+branch lineage visible in the next decorated stage.
 
-### Node tags and edge colors
+## Built for useful traces
 
-Use Logfire-style node tags for inspection and graph filtering:
+- **Signal over noise** — use `core`, `info`, `debug`, and `trace` capture
+  levels to control both captured nodes and metadata detail.
+- **Useful inspection** — filter by node tags; click graph nodes and edges for
+  payload type, size, preview, and optional captured values.
+- **Share or stream** — `pylier.render()` creates a portable HTML file;
+  `pylier.serve()` streams updates to a local viewer with SSE.
+- **Keep an audit trail** — `pylier.trace(..., sidecar="trace.jsonl")` writes
+  already-resolved events to JSONL for offline consumers.
 
-```python
-@pylier.node(_tags=["document", "embedding"])
-def embed(chunks: list[str]) -> list[dict]: ...
-```
-
-Tags belong to nodes, never inferred edges. The viewer colors every edge from
-its inferred payload type (`bool`, `int`, `float`, `str`, `list`, `dict`,
-`set`/`tuple`, binary, or other). A heterogeneous tuple carrying two or three
-distinct member types gets a matching multi-color edge.
-
-### Inspecting flowing data
-
-Click any **edge** in the viewer to see its payload metadata — and, when value
-capture is enabled, the full serialized payload (logfire-style "capture
-whatever you pass"):
-
-```bash
-export PYLIER_CAPTURE_VALUES=1    # or capture_values=True in .env / Settings
-```
-
-Disabled by default. Binary payloads (`bytes`/`bytearray`/`memoryview`) are
-always truncated to a summary like `<bytes 5000 bytes: 0000…>`.
-
-### Execution animation
-
-The viewer animates the trace from real execution events (pushed over SSE):
-nodes **pulse** from `enter` (received data) to `exit` (emitted result), and
-edges **fire** with a quick decaying glow at each data handoff. Static HTML
-files replay the recorded timeline once on load.
-
-## Transport (logfire-style)
-
-- **In-memory** (default): backs `pylier.trace()` and `pylier.render()`.
-- **Sidecar**: `pylier.trace(..., sidecar="trace.jsonl")` writes resolved events
-  to JSONL for offline replay / cross-process consumers.
-- **Live viewer**: `pylier.serve()` tails the active trace in-process.
-- **OTel receiver** (planned): consume logfire spans/logs and render them.
-
-## Example
-
-```bash
-uv run python examples/ingest.py html    # write pylier-ingest.html
-uv run python examples/ingest.py serve   # live viewer
-```
-
-## Tests
+## Development
 
 ```bash
 uv run pytest
+uv run ruff format src tests examples
+uv run ruff check src tests examples
 ```
+
+## Contributing
+
+Issues and pull requests are welcome at
+[theMladyPan/pylier](https://github.com/theMladyPan/pylier).
