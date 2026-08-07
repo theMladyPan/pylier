@@ -225,6 +225,10 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "tag-options" in html
     assert "--edge-glow-alpha" in html
     assert "duration(1000)" in html
+    assert ".velocityDecay(0.55)" in html
+    assert "sim.alpha(prevNodeIds.size ? 0.12 : 0.65).restart()" in html
+    assert "trace-start" in html
+    assert "traceStartNode" in html
     assert 'class="foot-note"' not in html
     assert "payload_kind" not in html
 

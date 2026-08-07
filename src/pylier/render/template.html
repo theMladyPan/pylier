@@ -192,7 +192,10 @@
   .link { fill: none; opacity: .8; stroke-width: 1.5px; }
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
-  .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden { display: none; }
+  .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden, .trace-start.tag-hidden { display: none; }
+  .trace-start { pointer-events: none; }
+  .trace-start path { fill: none; stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 3; opacity: .8; }
+  .trace-start text { fill: var(--accent); font: 700 9px var(--mono); letter-spacing: .12em; }
   /* A firing handoff keeps its inferred stroke and fades a type-matched glow. */
   .link.firing {
     filter: drop-shadow(0 0 6px color-mix(in srgb, var(--edge-glow) var(--edge-glow-alpha), transparent));
@@ -403,6 +406,7 @@ function syncGradients(links) {
   });
 }
 
+const startsG = root.append("g").attr("class", "starts");
 const linksG = root.append("g").attr("class", "links");
 const labelsG = root.append("g").attr("class", "labels");
 const nodesG = root.append("g").attr("class", "nodes");
@@ -412,11 +416,12 @@ const sim = d3.forceSimulation()
   .force("charge", d3.forceManyBody().strength(-900).distanceMax(700))
   .force("center", d3.forceCenter(w / 2, h / 2))
   .force("collide", d3.forceCollide().radius(d => Math.hypot(nodeW(d) / 2, NH / 2) + 28).iterations(2))
-  .alphaDecay(0.025);
+  .alphaDecay(0.018)
+  .velocityDecay(0.55);
 
 let nodeData = [];
 let linkData = [];
-let nodeSel = null, linkSel = null, labelSel = null;
+let nodeSel = null, linkSel = null, labelSel = null, startSel = null;
 
 function neighbors(id) {
   const set = new Set([id]);
@@ -462,6 +467,31 @@ function applyTagVisibility() {
   nodeSel.classed("tag-hidden", d => !visible.has(d.id));
   linkSel.classed("tag-hidden", d => !visible.has(endpointId(d.source)) || !visible.has(endpointId(d.target)));
   if (labelSel) labelSel.classed("tag-hidden", d => !visible.has(endpointId(d.source)) || !visible.has(endpointId(d.target)));
+  if (startSel) startSel.classed("tag-hidden", d => !visible.has(d.id));
+}
+
+function traceStartNode(data, nodes) {
+  const startId = (data.events || []).find(event => event.kind === "enter")?.node_id;
+  return nodes.find(node => node.id === startId) || nodes[0] || null;
+}
+
+function updateStartMarker(data, nodes) {
+  const start = traceStartNode(data, nodes);
+  const startJoin = startsG.selectAll("g.trace-start").data(start ? [start] : [], node => node.id);
+  startJoin.exit().remove();
+  const startEnter = startJoin.enter().append("g").attr("class", "trace-start");
+  startEnter.append("path");
+  startEnter.append("text").text("START");
+  startSel = startJoin.merge(startEnter);
+  startSel.select("path").attr("d", node => {
+    const x = -nodeW(node) / 2;
+    const y = -NH / 2;
+    return `M${x - 28},${y - 22}L${x - 5},${y - 5}`;
+  });
+  startSel.select("text")
+    .attr("x", node => -nodeW(node) / 2 - 31)
+    .attr("y", -NH / 2 - 24)
+    .attr("text-anchor", "end");
 }
 
 function renderTagFilters(nodes) {
@@ -571,6 +601,8 @@ function update() {
     .attr("x", d => nodeW(d) / 2 - 10)
     .attr("y", -15);
 
+  updateStartMarker(data, fresh);
+
   // --- link join (payload-type color and optional tuple gradient) ---
   syncGradients(links);
   const linkJoin = linksG.selectAll("path.link").data(links, edgeKey);
@@ -594,7 +626,7 @@ function update() {
 
   sim.nodes(fresh);
   sim.force("link").links(links);
-  if (topologyChanged) sim.alpha(Math.min(1, sim.alpha() + 0.3)).restart();
+  if (topologyChanged) sim.alpha(prevNodeIds.size ? 0.12 : 0.65).restart();
 
   applyTagVisibility();
   if (state.selected && nodeById.has(state.selected) && nodeMatchesTags(nodeById.get(state.selected))) highlight(nodeById.get(state.selected));
@@ -604,6 +636,7 @@ function update() {
 sim.on("tick", () => {
   if (linkSel) linkSel.attr("d", d => linkRoute(d).path);
   if (nodeSel) nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+  if (startSel) startSel.attr("transform", d => `translate(${d.x},${d.y})`);
   if (labelSel) labelSel
     .attr("x", d => linkRoute(d).x)
     .attr("y", d => linkRoute(d).y - 7);
