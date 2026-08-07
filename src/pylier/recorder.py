@@ -46,12 +46,8 @@ __all__ = [
 
 T = TypeVar("T")
 
-_active_trace: contextvars.ContextVar[Trace | None] = contextvars.ContextVar(
-    "pylier_active_trace", default=None
-)
-_level_override: contextvars.ContextVar[Level | None] = contextvars.ContextVar(
-    "pylier_level_override", default=None
-)
+_active_trace: contextvars.ContextVar[Trace | None] = contextvars.ContextVar("pylier_active_trace", default=None)
+_level_override: contextvars.ContextVar[Level | None] = contextvars.ContextVar("pylier_level_override", default=None)
 
 _default_trace: Trace | None = None
 # most recently entered trace context, so ``pylier.render()`` / ``serve()``
@@ -193,9 +189,7 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
     return_type = type_name(result)
     fp = fingerprint(result)
     trace.register_return(fp, meta.id)
-    trace.events.append(
-        Event(ts=time.time(), node_id=meta.id, kind="exit", fingerprint=fp, return_type=return_type)
-    )
+    trace.events.append(Event(ts=time.time(), node_id=meta.id, kind="exit", fingerprint=fp, return_type=return_type))
     _emit(trace, meta, result=result, return_type=return_type)
 
 
@@ -216,9 +210,7 @@ def _emit(trace: Trace, meta: NodeMeta, result: Any, return_type: str | None) ->
         "module": meta.module,
         "level": int(level),
         "return_type": return_type,
-        "result_preview": preview_of(result)
-        if level >= Level.DEBUG and result is not None
-        else None,
+        "result_preview": preview_of(result) if level >= Level.DEBUG and result is not None else None,
         "edges": edges_out,
     }
     for sink in trace.sinks:
@@ -257,9 +249,7 @@ def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: 
         record_exit(trace, meta, result, exc)
 
 
-async def record_call_async[T](
-    meta: NodeMeta, func: Callable[..., Awaitable[T]], args: tuple, kwargs: dict
-) -> T:
+async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]], args: tuple, kwargs: dict) -> T:
     """Async counterpart of :func:`record_call`."""
     if meta.level > current_level():
         return await func(*args, **kwargs)
