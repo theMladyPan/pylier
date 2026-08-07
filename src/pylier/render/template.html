@@ -28,7 +28,6 @@
     --type-tuple: #db61a2;
     --type-binary: #7d8590;
     --type-other: #7d8590;
-    --fire: #2f81f7;
     --st-busy: #2f81f7;   /* sync executing */
     --st-wait: #d29922;   /* async waiting */
     --st-idle: #3fb950;   /* idle / completed */
@@ -56,7 +55,6 @@
     --type-tuple: #bf3989;
     --type-binary: #656d76;
     --type-other: #656d76;
-    --fire: #0969da;
     --st-busy: #0969da;
     --st-wait: #9a6700;
     --st-idle: #1a7f37;
@@ -101,9 +99,9 @@
   #main.filters-collapsed { grid-template-columns: 34px minmax(0, 1fr) var(--sidebar-w); }
   #main.sidebar-collapsed { grid-template-columns: var(--filter-w) minmax(0, 1fr) 34px; }
   #main.filters-collapsed.sidebar-collapsed { grid-template-columns: 34px minmax(0, 1fr) 34px; }
-  #graph-wrap { position: relative; min-width: 0; }
+  #graph-wrap { position: relative; min-width: 0; display: flex; flex-direction: column; }
   #graph {
-    min-width: 0; background: var(--bg);
+    flex: 1; min-width: 0; min-height: 0; height: auto; background: var(--bg);
     background-image: radial-gradient(var(--dot) .7px, transparent .7px);
     background-size: 18px 18px;
   }
@@ -165,11 +163,10 @@
   .filter-mode { display: flex; gap: 12px; margin-top: 12px; font-size: 12px; }
   .filter-mode label { cursor: pointer; }
   #footer {
-    min-height: 34px; padding: 0 16px; border-top: 1px solid var(--panel-border); background: var(--panel-2);
-    display: flex; align-items: center; gap: 14px; overflow-x: auto; white-space: nowrap;
+    flex: 0 0 34px; min-width: 0; padding: 0 16px; border-top: 1px solid var(--panel-border); background: var(--panel-2);
+    display: flex; justify-content: center; align-items: center; gap: 14px; overflow-x: auto; white-space: nowrap;
     color: var(--muted); font-size: 10px;
   }
-  #footer .foot-note { margin-right: auto; }
   .type-key { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
   .type-key i { width: 12px; height: 2px; display: inline-block; }
   .type-key .bool { background: var(--type-bool); }.type-key .int { background: var(--type-int); }
@@ -196,9 +193,10 @@
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
   .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden { display: none; }
-  /* Execution feedback stays understated: a short handoff flash plus a slow
-     breathing border while a node is active. The status stripe remains primary. */
-  .link.firing { opacity: .95; stroke-width: 2px; filter: drop-shadow(0 0 2px var(--fire)); }
+  /* A firing handoff keeps its inferred stroke and fades a type-matched glow. */
+  .link.firing {
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--edge-glow) var(--edge-glow-alpha), transparent));
+  }
   .node.dimmed { opacity: .15; }
   .node.pulsing { --node-active: var(--st-busy); }
   .node.pulsing.async { --node-active: var(--st-wait); }
@@ -246,6 +244,13 @@
   </aside>
   <div id="graph-wrap">
     <svg id="graph"></svg>
+    <footer id="footer" aria-label="Payload type legend">
+      <span class="type-key"><i class="bool"></i>bool</span><span class="type-key"><i class="int"></i>int</span>
+      <span class="type-key"><i class="float"></i>float</span><span class="type-key"><i class="str"></i>str</span>
+      <span class="type-key"><i class="list"></i>list</span><span class="type-key"><i class="dict"></i>dict</span>
+      <span class="type-key"><i class="tuple"></i>set / tuple</span><span class="type-key"><i class="binary"></i>binary</span>
+      <span class="type-key"><i class="other"></i>other</span>
+    </footer>
   </div>
   <aside id="sidebar" aria-label="Run and details">
     <div class="resize-handle" id="sidebar-resize"></div>
@@ -265,14 +270,6 @@
     </div>
   </aside>
 </div>
-<footer id="footer">
-  <span class="foot-note">force-directed · rounded orthogonal edges · colors show inferred payload type</span>
-  <span class="type-key"><i class="bool"></i>bool</span><span class="type-key"><i class="int"></i>int</span>
-  <span class="type-key"><i class="float"></i>float</span><span class="type-key"><i class="str"></i>str</span>
-  <span class="type-key"><i class="list"></i>list</span><span class="type-key"><i class="dict"></i>dict</span>
-  <span class="type-key"><i class="tuple"></i>set / tuple</span><span class="type-key"><i class="binary"></i>binary</span>
-  <span class="type-key"><i class="other"></i>other</span>
-</footer>
 
 <script id="embedded-data" type="application/json">__PYLIER_GRAPH_JSON__</script>
 <script>
@@ -712,16 +709,22 @@ function bumpCalls(id) {
 function fireEdge(source, target) {
   if (!linkSel) return;
   const s = linkSel.filter(l => (l.source.id || l.source) === source && (l.target.id || l.target) === target);
-  s.classed("firing", true)
-    .style("stroke", "var(--fire)")
-    .style("stroke-dasharray", null)
-    .transition().duration(280).ease(d3.easeCubicOut)
+  s.interrupt("fire")
+    .classed("firing", true)
+    .style("--edge-glow", d => typeColorOf(d))
+    .style("--edge-glow-alpha", "85%")
+    .attr("stroke-width", 3)
+    .style("opacity", 1)
+    .transition("fire").duration(3000).ease(d3.easeCubicOut)
+    .style("--edge-glow-alpha", "0%")
+    .attr("stroke-width", 1.5)
+    .style("opacity", 0.8)
     .on("end", function () {
-      const l = d3.select(this).datum();
       d3.select(this)
         .classed("firing", false)
-        .style("stroke", l ? edgeStroke(l) : "var(--type-other)")
-        .style("stroke-dasharray", null);
+        .style("--edge-glow", null)
+        .style("--edge-glow-alpha", null)
+        .style("opacity", null);
     });
 }
 

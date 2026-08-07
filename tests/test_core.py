@@ -223,6 +223,9 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert len(graph["links"]) == 1
     assert "TYPE_COLOR" in html
     assert "tag-options" in html
+    assert "--edge-glow-alpha" in html
+    assert "duration(1000)" in html
+    assert 'class="foot-note"' not in html
     assert "payload_kind" not in html
 
 

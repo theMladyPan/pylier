@@ -69,12 +69,12 @@ def main(mode: str) -> None:
         # the change, so the graph grows node-by-node in the browser. Slow
         # each stage so the streaming is visible. Iterating re-enters nodes,
         # so call-counts accumulate and the badge counts climb live.
-        _STEP_DELAY = 0.6
+        _STEP_DELAY = 1.5
         with pylier.trace("doc-ingest") as tr:  # noqa: F841 (tr held for the viewer)
             server = pylier.serve()  # picks up the active trace via _last_trace
             print("viewer streaming — processing documents one at a time...")
             try:
-                for i in range(1, 4):
+                for i in range(1, 10):
                     doc = load_document("report.pdf")
                     text_chunks = extract_text(doc)
                     image_chunks = ocr_images(doc)
@@ -82,7 +82,7 @@ def main(mode: str) -> None:
                     image_vecs = embed(image_chunks)
                     total = index(text_vecs + image_vecs)
                     print(f"doc {i}: indexed {total} vectors")
-                    time.sleep(1.0)
+                    time.sleep(2.0)
                 input("press enter to stop...")
             except EOFError:
                 pass
