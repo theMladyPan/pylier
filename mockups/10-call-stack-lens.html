@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>pylier mockup 10 — call-stack lens</title>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#7d8590; --rule:#30363d; --blue:#2f81f7; --green:#3fb950; --amber:#d29922; --violet:#a371f7; }
+* { box-sizing:border-box; } html,body { height:100%; margin:0; } body { overflow:hidden; background:var(--bg); color:var(--ink); font:13px ui-monospace,SFMono-Regular,Menlo,monospace; }
+header { height:68px; display:flex; align-items:center; gap:14px; padding:0 24px; border-bottom:1px solid var(--rule); background:var(--panel); } h1 { margin:0; font:700 20px ui-sans-serif,system-ui; letter-spacing:-.04em; }.crumb,.muted { color:var(--muted); }.spacer{flex:1}.stamp{border:1px solid var(--green);color:var(--green);padding:5px 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+main { height:calc(100% - 68px); display:grid; grid-template-columns:minmax(0,1fr) 310px; } svg { width:100%; height:100%; display:block; background-image:radial-gradient(#21262d .7px,transparent .7px); background-size:18px 18px; } aside { border-left:1px solid var(--rule); } section { padding:18px; border-bottom:1px solid var(--rule); } h2 { margin:0 0 14px; color:var(--muted); font-size:10px; letter-spacing:.13em; text-transform:uppercase; } p { margin:0; color:#b1bac4; font:13px/1.55 ui-sans-serif,system-ui; }.row{display:grid;grid-template-columns:96px 1fr;gap:8px;padding:7px 0;border-bottom:1px dotted var(--rule)}.row span{color:var(--muted)}button{border:1px solid var(--rule);background:var(--panel);color:var(--ink);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;padding:6px 8px;cursor:pointer}button:hover{border-color:var(--blue)}
+.node { cursor:pointer; transition:opacity .15s; }.card { fill:var(--panel); stroke:var(--rule); stroke-width:1; }.node:hover .card,.node.selected .card { stroke:var(--blue); stroke-width:2; }.node.parent .card { stroke:#3b82d0; }.node.dimmed { opacity:.16; }.node text { pointer-events:none; }.num,.module,.crumb-text { fill:var(--muted); font-size:10px; }.name { fill:var(--ink); font-size:14px; font-weight:700; }.lat { fill:var(--ink); font-size:10px; text-anchor:end; }.chip { fill:#18283b; stroke:#2f81f7; stroke-width:1; }.chip-text { fill:#79b8ff; font-size:9px; font-weight:700; }.payload { fill:none; stroke-width:1.7; marker-end:url(#arrow); }.payload.doc { stroke:var(--amber); }.payload.list { stroke:var(--green); }.payload-label { fill:var(--muted); font-size:9px; paint-order:stroke; stroke:var(--bg); stroke-width:5px; }.call-thread { fill:none; stroke:var(--violet); stroke-width:1.25; stroke-dasharray:4 4; opacity:0; marker-end:url(#call-arrow); pointer-events:none; }.call-thread.visible { opacity:.95; }.call-label { fill:var(--violet); font-size:9px; opacity:0; }.call-label.visible { opacity:1; }.legend i{display:inline-block;width:18px;height:2px;margin-right:7px}.legend div{margin:9px 0}
+</style>
+</head>
+<body>
+<header><h1>pylier</h1><span class="crumb">/ document ingest · call-stack lens</span><span class="stamp">mockup</span><span class="spacer"></span><span class="muted">click a parent or child card</span></header>
+<main>
+<svg id="graph" viewBox="0 0 1120 650" aria-label="Flat data flow graph with inspectable parent child calls">
+<defs><marker id="arrow" viewBox="0 -4 8 8" refX="7" refY="0" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,-4L8,0L0,4Z" fill="#7d8590"/></marker><marker id="call-arrow" viewBox="0 -3 6 6" refX="5" refY="0" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,-3L6,0L0,3Z" fill="#a371f7"/></marker></defs>
+<text x="70" y="78" class="module">DATA FLOW — ALL NODES STAY AT ONE LEVEL</text><line x1="70" y1="88" x2="1040" y2="88" stroke="#21262d" stroke-dasharray="3 5"/>
+
+<!-- real payload edges -->
+<path class="payload doc" d="M250,202 H370"/><text class="payload-label" x="292" y="188">Document</text>
+<path class="payload doc" d="M205,235 V390 H325"/><text class="payload-label" x="216" y="330">Document</text>
+<path class="payload doc" d="M205,235 V540 H605"/><text class="payload-label" x="216" y="520">Document</text>
+<path class="payload list" d="M475,423 H540"/><text class="payload-label" x="490" y="409">list</text>
+<path class="payload list" d="M755,573 H810"/><text class="payload-label" x="770" y="559">list</text>
+<path class="payload list" d="M570,202 H845"/><text class="payload-label" x="700" y="188">vectors</text>
+
+<!-- call relationship overlay; never a data-flow edge -->
+<path class="call-thread" data-call="process" d="M470,236 V312 H400 V390"/>
+<path class="call-thread" data-call="process" d="M470,236 V312 H680 V540"/>
+<path class="call-thread" data-call="process" d="M470,236 V312 H610 V390"/>
+<path class="call-thread" data-call="process" d="M470,236 V312 H890 V540"/>
+<text class="call-label" data-call="process" x="482" y="302">direct calls</text>
+
+<g class="node" data-id="load" transform="translate(160 202)"><rect class="card" x="-90" y="-33" width="180" height="66" rx="3"/><text class="num" x="-76" y="-15">01</text><text class="name" x="-76" y="4">load_document</text><text class="module" x="-76" y="22">sources.files</text><text class="lat" x="77" y="-15">38 ms</text></g>
+<g class="node parent" data-id="process" transform="translate(470 202)"><rect class="card" x="-100" y="-33" width="200" height="66" rx="3"/><text class="num" x="-86" y="-15">02</text><text class="name" x="-86" y="4">process_document</text><text class="module" x="-86" y="22">pipeline.document</text><rect class="chip" x="33" y="10" width="55" height="15" rx="7"/><text class="chip-text" x="42" y="21">⇣ 4 calls</text><text class="lat" x="87" y="-15">627 ms</text></g>
+<g class="node" data-id="index" transform="translate(935 202)"><rect class="card" x="-90" y="-33" width="180" height="66" rx="3"/><text class="num" x="-76" y="-15">07</text><text class="name" x="-76" y="4">write_index</text><text class="module" x="-76" y="22">sinks.vector</text><text class="lat" x="77" y="-15">83 ms</text></g>
+<g class="node child" data-id="extract" transform="translate(400 423)"><rect class="card" x="-75" y="-33" width="150" height="66" rx="3"/><text class="num" x="-61" y="-15">03</text><text class="name" x="-61" y="4">extract_text</text><text class="crumb-text" x="-61" y="22">↳ process_document</text><text class="lat" x="62" y="-15">92 ms</text></g>
+<g class="node child" data-id="embed-a" transform="translate(615 423)"><rect class="card" x="-75" y="-33" width="150" height="66" rx="3"/><text class="num" x="-61" y="-15">04</text><text class="name" x="-61" y="4">embed</text><text class="crumb-text" x="-61" y="22">↳ process_document</text><text class="lat" x="62" y="-15">618 ms</text></g>
+<g class="node child" data-id="ocr" transform="translate(680 573)"><rect class="card" x="-75" y="-33" width="150" height="66" rx="3"/><text class="num" x="-61" y="-15">05</text><text class="name" x="-61" y="4">ocr_images</text><text class="crumb-text" x="-61" y="22">↳ process_document</text><text class="lat" x="62" y="-15">514 ms</text></g>
+<g class="node child" data-id="embed-b" transform="translate(885 573)"><rect class="card" x="-75" y="-33" width="150" height="66" rx="3"/><text class="num" x="-61" y="-15">06</text><text class="name" x="-61" y="4">embed</text><text class="crumb-text" x="-61" y="22">↳ process_document</text><text class="lat" x="62" y="-15">618 ms</text></g>
+</svg>
+<aside><section><h2>Call-stack lens</h2><p>The graph never changes geometry for call hierarchy. Solid colored arrows remain payload flow. The purple dashed call threads only appear while inspecting a parent or child.</p></section><section><h2>Selected relation</h2><div id="selection"><div class="row"><span>state</span><b>none</b></div><div class="row"><span>action</span><b>click a card</b></div></div><div style="margin-top:14px"><button id="reset">Reset lens</button></div></section><section class="legend"><h2>Visual language</h2><div><i style="background:#3fb950"></i>payload flow</div><div><i style="background:#a371f7;border-top:1px dashed #a371f7"></i>call nesting · selection only</div><div><i style="background:#2f81f7"></i>selected card</div></section></aside>
+</main>
+<script>
+const nodes=[...document.querySelectorAll('.node')];
+const threads=[...document.querySelectorAll('.call-thread')];
+const labels=[...document.querySelectorAll('.call-label')];
+const childIds=new Set(['extract','embed-a','ocr','embed-b']);
+function select(id){
+  const parentMode=id==='process';
+  const related=parentMode?new Set(['process',...childIds]):childIds.has(id)?new Set(['process',id]):new Set([id]);
+  nodes.forEach(node=>node.classList.toggle('selected',node.dataset.id===id));
+  nodes.forEach(node=>node.classList.toggle('dimmed',!related.has(node.dataset.id)));
+  threads.forEach(thread=>thread.classList.toggle('visible',parentMode||childIds.has(id)));
+  labels.forEach(label=>label.classList.toggle('visible',parentMode||childIds.has(id)));
+  document.getElementById('selection').innerHTML=parentMode?'<div class="row"><span>parent</span><b>process_document</b></div><div class="row"><span>direct calls</span><b>4 highlighted</b></div>':childIds.has(id)?`<div class="row"><span>child span</span><b>${id.startsWith('embed')?'embed':id}</b></div><div class="row"><span>called by</span><b>process_document</b></div>`:'<div class="row"><span>node</span><b>no call relation</b></div>';
+}
+function reset(){nodes.forEach(node=>node.classList.remove('selected','dimmed'));threads.forEach(thread=>thread.classList.remove('visible'));labels.forEach(label=>label.classList.remove('visible'));document.getElementById('selection').innerHTML='<div class="row"><span>state</span><b>none</b></div><div class="row"><span>action</span><b>click a card</b></div>';}
+nodes.forEach(node=>node.addEventListener('click',()=>select(node.dataset.id)));document.getElementById('reset').addEventListener('click',reset);
+</script>
+</body>
+</html>
