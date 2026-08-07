@@ -200,6 +200,10 @@
   .node rect.body { fill: var(--card); stroke: var(--node-stroke); stroke-width: 1; }
   .node:hover rect.body { stroke: var(--accent); stroke-width: 1.5; }
   .node rect.status { stroke: none; }
+  .node.parent-expanded rect.body { stroke: var(--accent); stroke-width: 1.5; fill: color-mix(in srgb, var(--card) 82%, var(--accent)); }
+  .node.nested-call rect.body { stroke: color-mix(in srgb, var(--accent) 55%, var(--node-stroke)); }
+  .nested-group rect { fill: color-mix(in srgb, var(--accent) 7%, transparent); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 5 3; pointer-events: none; }
+  .nested-group text { fill: var(--accent); font: 700 10px var(--mono); pointer-events: none; }
   .node text { pointer-events: none; font-family: var(--mono); }
   .node .num { font-size: 9px; fill: var(--muted); }
   .node .name { font-size: 13px; font-weight: 700; fill: var(--ink); }
@@ -495,7 +499,7 @@ if (LIVE) {
   es.onerror = () => { es.close(); };
 }
 
-let state = { showLabels: true, animate: true, edgeMode: "rectilinear", selected: null, tagFilter: new Set(), tagMode: "any" };
+let state = { showLabels: true, animate: true, edgeMode: "rectilinear", selected: null, tagFilter: new Set(), tagMode: "any", expandedNodes: new Set() };
 // nodes currently executing (enter seen, exit not) — drives the status stripe
 const active = new Set();
 
@@ -542,6 +546,7 @@ function syncGradients(links) {
   });
 }
 
+const nestedGroupsG = root.append("g").attr("class", "nested-groups");
 const startsG = root.append("g").attr("class", "starts");
 const linksG = root.append("g").attr("class", "links");
 const labelsG = root.append("g").attr("class", "labels");
@@ -551,13 +556,13 @@ const sim = d3.forceSimulation()
   .force("link", d3.forceLink().id(d => d.id).distance(240).strength(0.38))
   .force("charge", d3.forceManyBody().strength(-900).distanceMax(700))
   .force("center", d3.forceCenter(w / 2, h / 2))
-  .force("collide", d3.forceCollide().radius(d => Math.hypot(nodeW(d) / 2, NH / 2) + 28).iterations(2))
+  .force("collide", d3.forceCollide().radius(d => (d.nested_extent || Math.hypot(nodeW(d) / 2, NH / 2)) + 28).iterations(2))
   .alphaDecay(0.018)
   .velocityDecay(0.55);
 
 let nodeData = [];
 let linkData = [];
-let nodeSel = null, linkSel = null, labelSel = null, startSel = null;
+let nodeSel = null, linkSel = null, labelSel = null, startSel = null, nestedGroupSel = null;
 
 function neighbors(id) {
   const set = new Set([id]);
@@ -647,8 +652,85 @@ function renderTagFilters(nodes) {
     });
 }
 
+function settleNestedChildren(nodes, groups) {
+  for (const [parentId, spans] of groups) {
+    if (!state.expandedNodes.has(parentId)) continue;
+    const parent = nodes.find(node => node.id === parentId);
+    const children = nodes.filter(node => node.nested_parent === parentId);
+    if (!parent || !children.length) continue;
+    const localChildren = children.map((child, index) => ({
+      child,
+      x: (index % 2 ? 1 : -1) * 110,
+      y: 105 + Math.floor(index / 2) * 100,
+    }));
+    const localSimulation = d3.forceSimulation(localChildren)
+      .force("charge", d3.forceManyBody().strength(-520))
+      .force("x", d3.forceX(0).strength(0.08))
+      .force("y", d3.forceY(150).strength(0.12))
+      .force("collide", d3.forceCollide().radius(item => nodeW(item.child) / 2 + 22).iterations(3))
+      .stop();
+    for (let tick = 0; tick < 160; tick += 1) localSimulation.tick();
+    for (const item of localChildren) {
+      item.child.nested_dx = item.x;
+      item.child.nested_dy = item.y;
+      item.child.x = parent.x + item.x;
+      item.child.y = parent.y + item.y;
+      item.child.fx = item.child.x;
+      item.child.fy = item.child.y;
+    }
+    parent.nested_extent = Math.max(...localChildren.map(item => Math.hypot(item.x, item.y))) + 130;
+  }
+}
+
+function nestedProjection(data) {
+  const nodesById = new Map((data.nodes || []).map(node => [node.id, node]));
+  const spansById = new Map((data.spans || []).map(span => [span.span_id, span]));
+  const childrenByParent = new Map();
+  for (const span of data.spans || []) {
+    const parent = spansById.get(span.parent_span_id);
+    if (!parent || !nodesById.has(parent.name) || !nodesById.has(span.name)) continue;
+    const children = childrenByParent.get(parent.name) || [];
+    children.push(span);
+    childrenByParent.set(parent.name, children);
+  }
+  const nestedNodeIds = new Set([...childrenByParent.values()].flat().map(span => span.name));
+  const visibleNodes = (data.nodes || []).filter(node => !nestedNodeIds.has(node.id) || childrenByParent.has(node.id));
+  const childToParent = new Map();
+  const childCards = [];
+  for (const [parentId, spans] of childrenByParent) {
+    if (!state.expandedNodes.has(parentId)) {
+      spans.forEach(span => childToParent.set(span.name, parentId));
+      continue;
+    }
+    spans.forEach((span, index) => {
+      const parent = nodesById.get(parentId);
+      const angle = (index / Math.max(spans.length, 1)) * Math.PI * 2 - Math.PI / 2;
+      const radius = 145 + Math.floor(index / 4) * 80;
+      childCards.push({
+        ...nodesById.get(span.name), id: `span:${span.span_id}`, span_id: span.span_id,
+        function_id: span.name, name: span.name.split(".").at(-1), calls: 1, nested_parent: parentId,
+        nested_dx: Math.cos(angle) * radius, nested_dy: Math.sin(angle) * radius,
+        last_ms: span.ended_ns ? (span.ended_ns - span.started_ns) / 1e6 : null,
+      });
+    });
+  }
+  const visibleIds = new Set([...visibleNodes, ...childCards].map(node => node.id));
+  const links = [];
+  for (const link of data.links || []) {
+    let source = childToParent.get(link.source) || link.source;
+    let target = childToParent.get(link.target) || link.target;
+    const sourceChild = childCards.find(node => node.function_id === link.source || node.name === link.source.split(".").at(-1));
+    const targetChild = childCards.find(node => node.function_id === link.target || node.name === link.target.split(".").at(-1));
+    if (sourceChild) source = sourceChild.id;
+    if (targetChild) target = targetChild.id;
+    if (source !== target && visibleIds.has(source) && visibleIds.has(target)) links.push({ ...link, source, target });
+  }
+  return { nodes: [...visibleNodes, ...childCards], links, groups: childrenByParent };
+}
+
 function update() {
   const data = loadData();
+  const projected = nestedProjection(data);
   // header + summary
   d3.select("#h-name").text(data.name || "trace");
   d3.select("#s-nodes").text(data.nodes.length);
@@ -663,16 +745,18 @@ function update() {
 
   const prevById = new Map(nodeData.map(n => [n.id, n]));
   const prevNodeIds = new Set(prevById.keys());
-  const fresh = data.nodes.map((d, i) => {
+  const fresh = projected.nodes.map((d, i) => {
     const prev = prevById.get(d.id);
     if (prev) return Object.assign(prev, d);
-    const sp = spawnPosition(d.id, prevById, data, i, data.nodes.length);
-    return Object.assign({}, d, { x: sp.x, y: sp.y });
+    const parent = d.nested_parent ? prevById.get(d.nested_parent) : null;
+    const sp = parent ? { x: parent.x + d.nested_dx, y: parent.y + d.nested_dy } : spawnPosition(d.id, prevById, projected, i, projected.nodes.length);
+    return Object.assign({}, d, { x: sp.x, y: sp.y, fx: parent ? sp.x : undefined, fy: parent ? sp.y : undefined });
   });
+  settleNestedChildren(fresh, projected.groups);
   const nodeById = new Map(fresh.map(n => [n.id, n]));
 
   renderTagFilters(fresh);
-  const links = data.links
+  const links = projected.links
     .map((l, i) => ({ ...l, _idx: i }))
     .filter(l => nodeById.has(l.source) && nodeById.has(l.target));
 
@@ -703,10 +787,21 @@ function update() {
   nodeEnter.append("text").attr("class", "name").attr("y", 3);
   nodeEnter.append("text").attr("class", "module").attr("y", 21);
   nodeEnter.append("text").attr("class", "lat").attr("y", -15);
-  nodeEnter.on("click", (e, d) => { state.selected = d.id; highlight(d); renderDetails(d); });
+  nodeEnter.on("click", (e, d) => {
+    if (projected.groups.has(d.id)) {
+      if (state.expandedNodes.has(d.id)) state.expandedNodes.delete(d.id);
+      else state.expandedNodes.add(d.id);
+      state.selected = null;
+      update();
+      sim.alpha(0.35).restart();
+      setTimeout(fit, 250);
+      return;
+    }
+    state.selected = d.id; highlight(d); renderDetails(d);
+  });
 
   nodeSel = nodeJoin.merge(nodeEnter);
-  nodeSel.attr("class", d => "node" + (d.is_async ? " async" : "") + (active.has(d.id) ? " pulsing" : ""));
+  nodeSel.attr("class", d => "node" + (d.nested_parent ? " nested-call" : "") + (state.expandedNodes.has(d.id) ? " parent-expanded" : "") + (d.is_async ? " async" : "") + (active.has(d.id) ? " pulsing" : ""));
   nodeSel.select("rect.body").attr("width", nodeW).attr("x", d => -nodeW(d) / 2);
   nodeSel.select("rect.status")
     .attr("x", d => -nodeW(d) / 2).attr("height", NH).attr("y", -NH / 2)
@@ -738,6 +833,14 @@ function update() {
     .attr("y", -15);
 
   updateStartMarker(data, fresh);
+  const expandedGroups = [...projected.groups].filter(([parentId]) => state.expandedNodes.has(parentId));
+  const groupJoin = nestedGroupsG.selectAll("g.nested-group").data(expandedGroups, entry => entry[0]);
+  groupJoin.exit().remove();
+  const groupEnter = groupJoin.enter().append("g").attr("class", "nested-group");
+  groupEnter.append("rect").attr("rx", 7);
+  groupEnter.append("text");
+  nestedGroupSel = groupJoin.merge(groupEnter);
+  nestedGroupSel.select("text").text(([parentId]) => `▾ ${parentId.split(".").at(-1)} · collapse`);
 
   // --- link join (payload-type color and optional tuple gradient) ---
   syncGradients(links);
@@ -781,7 +884,23 @@ function redrawEdges() {
 }
 
 sim.on("tick", () => {
+  for (const node of nodeData) {
+    if (node.nested_parent) {
+      const parent = nodeData.find(candidate => candidate.id === node.nested_parent);
+      if (parent) { node.x = parent.x + node.nested_dx; node.y = parent.y + node.nested_dy; }
+    }
+  }
   redrawEdges();
+  if (nestedGroupSel) nestedGroupSel.each(function ([parentId]) {
+    const members = nodeData.filter(node => node.id === parentId || node.nested_parent === parentId);
+    const minX = Math.min(...members.map(node => node.x - nodeW(node) / 2)) - 26;
+    const maxX = Math.max(...members.map(node => node.x + nodeW(node) / 2)) + 26;
+    const minY = Math.min(...members.map(node => node.y - NH / 2)) - 46;
+    const maxY = Math.max(...members.map(node => node.y + NH / 2)) + 26;
+    const group = d3.select(this);
+    group.select("rect").attr("x", minX).attr("y", minY).attr("width", maxX - minX).attr("height", maxY - minY);
+    group.select("text").attr("x", minX + 8).attr("y", minY + 16);
+  });
   if (nodeSel) nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
   if (startSel) startSel.attr("transform", d => `translate(${d.x},${d.y})`);
 });

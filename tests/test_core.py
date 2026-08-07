@@ -600,9 +600,10 @@ def test_sse_latency_update_does_not_emit_empty_exec_batches():
             pass
 
         trace.record_latency("latency", 1.5)
-        # A latency-only update must not begin an unbounded stream of empty
-        # ``event: exec`` frames. The registry-backed viewer stays quiet until
-        # a real event or heartbeat is available.
+        # A latency-only update may wake the SSE loop with a heartbeat, but
+        # must not begin an unbounded stream of empty ``event: exec`` frames.
+        assert response.readline() == b": heartbeat\n"
+        assert response.readline() == b"\n"
         with pytest.raises((TimeoutError, socket.timeout)):
             response.readline()
     finally:
