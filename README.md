@@ -49,6 +49,26 @@ with pylier.set_level("debug"):   # core < info < debug < trace
 Levels (`core` < `info` < `debug` < `trace`) control both which nodes are
 captured and how much payload metadata (type, size, preview, tags) is recorded.
 
+### Inspecting flowing data
+
+Click any **edge** in the viewer to see its payload metadata — and, when value
+capture is enabled, the full serialized payload (logfire-style "capture
+whatever you pass"):
+
+```bash
+export PYLIER_CAPTURE_VALUES=1    # or capture_values=True in .env / Settings
+```
+
+Disabled by default. Binary payloads (`bytes`/`bytearray`/`memoryview`) are
+always truncated to a summary like `<bytes 5000 bytes: 0000…>`.
+
+### Execution animation
+
+The viewer animates the trace from real execution events (pushed over SSE):
+nodes **pulse** from `enter` (received data) to `exit` (emitted result), and
+edges **fire** with a quick decaying glow at each data handoff. Static HTML
+files replay the recorded timeline once on load.
+
 ## Transport (logfire-style)
 
 - **In-memory** (default): backs `pylier.trace()` and `pylier.render()`.

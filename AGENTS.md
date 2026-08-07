@@ -85,9 +85,16 @@ tooling without an explicit decision.
 ### One render core, static + live
 - `render/template.html` is the single source of truth for the graph look. Both
   static (`pylier.render()`) and live (`pylier.serve()`) use it. Static embeds
-  the JSON; live polls `/graph` every 1.5s and re-renders in place.
+  the JSON (incl. the `events` timeline) and replays the execution animation
+  once on load; live subscribes to SSE (`/events`) and re-renders in place.
 - **Why:** one look everywhere; no drift between test artifacts and live
   preview. The template also falls back to embedded JSON for `file://` opens.
+- The client keeps a **persistent force simulation + D3 join** — never tear
+  down and cold-restart on updates (that was the 1.5s tearing bug). New nodes
+  spawn near an already-placed neighbor, not the center.
+- Live updates are **push, not poll**: SSE sends `event: graph` on topology
+  change (new node/edge, rare) and `event: exec` batches (enter/exit, real-time)
+  that drive the node-pulse / edge-fire animation and call-count badges.
 
 ### Flat top-level API
 - `@pylier.node`, `pylier.trace()`, `pylier.render()`, `pylier.serve()`,
@@ -130,6 +137,11 @@ examples/ingest.py
 - **Level filtering runs before instrumentation.** Uncaptured nodes call the
   raw function with zero overhead and register nothing — otherwise they'd
   create phantom edges into captured nodes.
+- **Two trace versions**: `graph_version` bumps only on topology change (new
+  node/edge — SSE pushes full graph rarely); `exec_version` bumps on every
+  enter/exit event (SSE pushes exec batches in real time). Call-count
+  increments must NOT bump `graph_version` (clients update badges locally
+  from exec events).
 - **`render/template.html` placeholders** replaced by `render/html.py`:
   `__PYLIER_GRAPH__` (JS object), `__PYLIER_GRAPH_JSON__` (embedded fallback),
   `{{NAME}}` (header). When editing the template, keep these exact tokens.
@@ -184,11 +196,13 @@ examples/ingest.py
 
 - **Fingerprinting misses transformed/aggregated copies** (see edge-inference
   decision above). Document, don't silently patch.
-- The live viewer currently tails the **in-memory** trace; the sidecar sink
+- The live viewer pushes the **in-memory** trace; the sidecar sink
   writes events but the viewer doesn't yet reconstruct from a sidecar across
   processes. (Fast-follow: viewer tails sidecar.)
 - OTel/logfire receiver: planned, **not implemented**.
 - Decorated-but-never-called nodes are not rendered (only called nodes appear).
+- Edge `value` capture is opt-in (`PYLIER_CAPTURE_VALUES`) and binary payloads
+  are always truncated to a summary — never embedded raw.
 
 ## Fast-follows (out of v0.1 scope — do only on request)
 

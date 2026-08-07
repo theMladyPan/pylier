@@ -93,23 +93,51 @@ def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
                 self._send(b"not found", "text/plain", HTTPStatus.NOT_FOUND)
 
         def _handle_sse(self) -> None:
-            """Stream the graph as SSE whenever the trace version advances."""
+            """Stream graph topology (rare) and execution events (real-time).
+
+            Emits ``event: graph`` with the full graph whenever the topology
+            version advances (new node/edge), and ``event: exec`` with a batch
+            of enter/exit events whenever the execution version advances. The
+            client uses graph events to (re)join nodes/links and exec events to
+            drive the fire/pulse animation and call-count badges.
+            """
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            last = -1  # forces an immediate full-graph send on connect
+            graph_since = -1  # forces an immediate full-graph send on connect
+            exec_since = 0
             try:
                 while True:
-                    version = captured_trace.wait_for_change(last, timeout=_SSE_HEARTBEAT)
-                    if version > last:
+                    graph_v, exec_v = captured_trace.wait_for_change(graph_since, exec_since, timeout=_SSE_HEARTBEAT)
+                    wrote = False
+                    if graph_v > graph_since:
                         payload = json.dumps(captured_trace.to_graph_dict(), default=str)
                         self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
+                        graph_since = graph_v
+                        wrote = True
+                    if exec_v > exec_since:
+                        total, new_events = captured_trace.events_since(exec_since)
+                        batch = json.dumps(
+                            [
+                                {
+                                    "ts": ev.ts,
+                                    "node_id": ev.node_id,
+                                    "kind": ev.kind,
+                                    "edges": ev.edges,
+                                }
+                                for ev in new_events
+                            ],
+                            default=str,
+                        )
+                        self.wfile.write(f"event: exec\ndata: {batch}\n\n".encode())
+                        exec_since = total
+                        wrote = True
+                    if wrote:
                         self.wfile.flush()
-                        last = version
                     else:
-                        # no change within the heartbeat window: keep alive
+                        # nothing changed within the heartbeat window: keep alive
                         self.wfile.write(b": heartbeat\n\n")
                         self.wfile.flush()
             except BrokenPipeError, ConnectionResetError:

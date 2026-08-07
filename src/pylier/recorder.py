@@ -27,7 +27,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from pylier.fingerprint import fingerprint, preview_of, size_of, type_name
+from pylier.fingerprint import fingerprint, preview_of, serialize_value, size_of, type_name
 from pylier.model import Edge, Event, Level, Node, Trace
 
 __all__ = [
@@ -160,10 +160,22 @@ def _make_node(meta: NodeMeta) -> Node:
     )
 
 
+def _capture_values_enabled() -> bool:
+    from pylier.config import get_settings
+
+    return get_settings().capture_values
+
+
 def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> None:
-    """Register the node call and infer inbound edges from arg fingerprints."""
+    """Register the node call and infer inbound edges from arg fingerprints.
+
+    Appends an ``enter`` event listing the edges fired at this moment — each
+    (source -> this) pair is a data handoff the renderer should glow on.
+    """
     trace.get_or_create_node(_make_node(meta))
     level = current_level()
+    capture = _capture_values_enabled()
+    fired: list[dict[str, str]] = []
     for arg in (*args, *kwargs.values()):
         fp = fingerprint(arg)
         source_id = trace.lookup_source(fp)
@@ -176,20 +188,22 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> Non
             size=size_of(arg) if level >= Level.INFO else None,
             preview=preview_of(arg) if level >= Level.DEBUG else None,
             tags=meta.tags,
+            value=serialize_value(arg) if capture else None,
         )
-    trace.events.append(Event(ts=time.time(), node_id=meta.id, kind="enter", fingerprint=None))
+        fired.append({"source": source_id, "target": meta.id})
+    trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="enter", edges=fired))
 
 
 def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | None) -> None:
     """Register the return value (for downstream inference) and emit the exit."""
     if exc is not None:
-        trace.events.append(Event(ts=time.time(), node_id=meta.id, kind="exit", fingerprint=None))
+        trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="exit"))
         _emit(trace, meta, result=None, return_type=None)
         return
     return_type = type_name(result)
     fp = fingerprint(result)
     trace.register_return(fp, meta.id)
-    trace.events.append(Event(ts=time.time(), node_id=meta.id, kind="exit", fingerprint=fp, return_type=return_type))
+    trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="exit", fingerprint=fp, return_type=return_type))
     _emit(trace, meta, result=result, return_type=return_type)
 
 
@@ -228,6 +242,7 @@ def _edge_dict(edge: Edge) -> dict[str, Any]:
         "preview": edge.preview,
         "tags": edge.tags,
         "count": edge.count,
+        "value": edge.value,
     }
 
 

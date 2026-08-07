@@ -28,6 +28,11 @@ class Settings(BaseSettings):
         sidecar_name: Filename within ``sidecar_path`` for the active sidecar.
         server_port: Port used by ``pylier.serve()`` for the live viewer.
         preview_limit: Max chars of value preview captured at DEBUG+ levels.
+        capture_values: If True, recorder stores the full serialized payload on
+            each edge for click-to-inspect debugging (like logfire capturing
+            whatever you pass). Disabled by default; binary payloads are
+            always truncated to a summary. Settable via ``PYLIER_CAPTURE_VALUES``.
+        value_limit: Max chars of a serialized payload value.
     """
 
     model_config = SettingsConfigDict(env_prefix="PYLIER_", env_file=".env", extra="ignore")
@@ -37,6 +42,8 @@ class Settings(BaseSettings):
     sidecar_name: str = "pylier-trace.jsonl"
     server_port: int = 8765
     preview_limit: int = 80
+    capture_values: bool = False
+    value_limit: int = 2000
 
 
 @lru_cache

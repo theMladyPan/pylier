@@ -274,3 +274,117 @@ def test_size_not_captured_at_core():
     edge = next(iter(tr.edges.values()))
     assert edge.size is None
     assert edge.preview is None
+
+
+def test_value_not_captured_by_default():
+    @pylier.node
+    def produce():
+        return {"secret": 42}
+
+    @pylier.node
+    def consume(doc):
+        return doc
+
+    with pylier.trace() as tr:
+        consume(produce())
+
+    edge = next(iter(tr.edges.values()))
+    assert edge.value is None
+
+
+def test_value_captured_when_enabled(monkeypatch):
+    from pylier.config import get_settings, reload_settings
+
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    reload_settings()
+    try:
+
+        @pylier.node
+        def produce():
+            return {"doc": "hello", "n": 2}
+
+        @pylier.node
+        def consume(doc):
+            return doc["doc"]
+
+        with pylier.trace() as tr:
+            consume(produce())
+
+        edge = next(iter(tr.edges.values()))
+        assert edge.value is not None
+        payload = json.loads(edge.value)
+        assert payload == {"doc": "hello", "n": 2}
+    finally:
+        get_settings.cache_clear()
+
+
+def test_binary_payload_truncated(monkeypatch):
+    from pylier.config import reload_settings
+
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    reload_settings()
+    try:
+
+        @pylier.node
+        def produce():
+            return b"\x00" * 5000
+
+        @pylier.node
+        def consume(blob):
+            return len(blob)
+
+        with pylier.trace() as tr:
+            consume(produce())
+
+        edge = next(iter(tr.edges.values()))
+        assert edge.value is not None
+        assert edge.value.startswith("<bytes 5000 bytes:")
+        assert len(edge.value) < 200  # truncated summary, never raw
+    finally:
+        reload_settings()
+
+
+def test_events_timeline_and_edge_handoffs():
+    @pylier.node
+    def produce():
+        return "p"
+
+    @pylier.node
+    def consume(data):
+        return data
+
+    with pylier.trace("tl") as tr:
+        consume(produce())
+
+    kinds = [e.kind for e in tr.events]
+    assert kinds == ["enter", "exit", "enter", "exit"]  # nested call order
+    # consume's enter event carries the fired handoff edge produce->consume
+    consume_enter = tr.events[2]
+    assert consume_enter.kind == "enter"
+    assert len(consume_enter.edges) == 1
+    fired = consume_enter.edges[0]
+    assert fired["source"].endswith("produce")
+    assert fired["target"].endswith("consume")
+    # timeline is in the graph dict for static replay
+    graph = tr.to_graph_dict()
+    assert [ev["kind"] for ev in graph["events"]] == kinds
+    assert graph["events"][2]["edges"] == consume_enter.edges
+
+
+def test_versions_split_topology_vs_execution():
+    @pylier.node
+    def produce():
+        return "p"
+
+    @pylier.node
+    def consume(data):
+        return data
+
+    with pylier.trace("v") as tr:
+        consume(produce())
+        g1, e1 = tr.graph_version, tr.exec_version
+        consume(produce())  # repeats: no new topology, more events
+        g2, e2 = tr.graph_version, tr.exec_version
+
+    assert g2 == g1  # topology unchanged
+    assert e2 > e1  # execution events still streamed

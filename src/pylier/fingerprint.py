@@ -16,9 +16,11 @@ resolved, so cross-process stability is not required).
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 _PREVIEW_LIMIT = 80
+_VALUE_LIMIT = 2000
 
 
 def type_name(value: Any) -> str:
@@ -31,6 +33,25 @@ def size_of(value: Any) -> int | None:
         return len(value)
     except TypeError:
         return None
+
+
+def serialize_value(value: Any, limit: int = _VALUE_LIMIT) -> str:
+    """Best-effort full serialization of a payload for edge inspection.
+
+    Logfire-style: capture whatever was passed. JSON-encodable values are
+    serialized; others fall back to repr. Binary payloads are truncated to a
+    summary (never embedded raw). Output is capped at ``limit`` chars.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        head = bytes(value[:16]).hex()
+        return f"<{type_name(value)} {len(value)} bytes: {head}…>"
+    try:
+        text = json.dumps(value, default=str, ensure_ascii=False, indent=2)
+    except Exception:
+        text = preview_of(value, limit)
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
+    return text
 
 
 def preview_of(value: Any, limit: int = _PREVIEW_LIMIT) -> str:
@@ -68,4 +89,4 @@ def _content_hash(value: Any) -> str:
     return hashlib.sha1(payload, usedforsecurity=False).hexdigest()[:12]
 
 
-__all__ = ["fingerprint", "type_name", "size_of", "preview_of"]
+__all__ = ["fingerprint", "type_name", "size_of", "preview_of", "serialize_value"]
