@@ -36,6 +36,91 @@ def test_sync_edge_inferred_from_returned_value():
     assert edge.payload_type == "dict"
 
 
+def test_derive_infers_multiple_sources_for_a_computed_value():
+    @pylier.node
+    def load_title():
+        return "Hello"
+
+    @pylier.node
+    def load_body():
+        return "world"
+
+    @pylier.node
+    def index_document(document: str):
+        return document.upper()
+
+    with pylier.trace() as trace:
+        title = load_title()
+        body = load_body()
+        document = pylier.derive(title + " " + body, from_=[title, body])
+        assert isinstance(document, str)
+        assert document == "Hello world"
+        index_document(document)
+
+    index_node_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("index_document"))
+    inbound_source_names = {
+        trace.nodes[source_id].name.rsplit(".", 1)[-1]
+        for source_id, target_id in trace.edges
+        if target_id == index_node_id
+    }
+    assert inbound_source_names == {"load_title", "load_body"}
+
+
+def test_derive_preserves_transitive_lineage_and_deduplicates_sources():
+    @pylier.node
+    def load_title():
+        return "Hello"
+
+    @pylier.node
+    def load_body():
+        return "world"
+
+    @pylier.node
+    def index_document(document: str):
+        return document
+
+    with pylier.trace() as trace:
+        title = load_title()
+        body = load_body()
+        combined = pylier.derive(title + body, from_=[title, body, title])
+        wrapped = pylier.derive(f"<{combined}>", from_=[combined])
+        index_document(wrapped)
+
+    index_node_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("index_document"))
+    inbound_edges = [edge for edge in trace.edges.values() if edge.target == index_node_id]
+    assert {trace.nodes[edge.source].name.rsplit(".", 1)[-1] for edge in inbound_edges} == {
+        "load_title",
+        "load_body",
+    }
+    assert all(edge.count == 1 for edge in inbound_edges)
+
+
+def test_derive_warns_and_keeps_known_sources_when_a_source_is_untraced():
+    @pylier.node
+    def load_title():
+        return "Hello"
+
+    @pylier.node
+    def index_document(document: str):
+        return document
+
+    with pylier.trace() as trace:
+        title = load_title()
+        with pytest.warns(RuntimeWarning, match="1 declared source"):
+            document = pylier.derive(title + " external", from_=[title, " external"])
+        index_document(document)
+
+    assert len(trace.edges) == 1
+    edge = next(iter(trace.edges.values()))
+    assert trace.nodes[edge.source].name.endswith("load_title")
+    assert trace.nodes[edge.target].name.endswith("index_document")
+
+
+def test_derive_rejects_a_single_string_as_the_source_iterable():
+    with pytest.raises(TypeError, match="iterable of source values"):
+        pylier.derive("derived", from_="source")
+
+
 def test_logfire_style_node_tags_are_serialized_on_nodes_only():
     @pylier.node
     def emit():

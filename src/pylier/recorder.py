@@ -23,7 +23,8 @@ import contextvars
 import functools
 import inspect
 import time
-from collections.abc import Awaitable, Callable, Sequence
+import warnings
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -42,6 +43,7 @@ __all__ = [
     "set_level",
     "level_context",
     "current_level",
+    "derive_value",
 ]
 
 T = TypeVar("T")
@@ -168,6 +170,46 @@ def _capture_values_enabled() -> bool:
     return get_settings().capture_values
 
 
+def derive_value[T](value: T, *, from_: Iterable[object]) -> T:
+    """Associate a computed value with the traced values used to make it.
+
+    Args:
+        value: The plain computed value returned unchanged to application code.
+        from_: Source values that contributed to ``value``.
+
+    Returns:
+        The original ``value``.
+
+    Raises:
+        TypeError: If ``from_`` is a string/bytes value or is not iterable.
+    """
+    if isinstance(from_, (str, bytes)) or not isinstance(from_, Iterable):
+        raise TypeError("from_ must be an iterable of source values, not a single string/bytes value")
+
+    trace = current_trace()
+    source_ids: list[str] = []
+    unknown_source_count = 0
+    for source_value in from_:
+        resolved_source_ids = trace.lookup_sources(fingerprint(source_value))
+        if not resolved_source_ids:
+            unknown_source_count += 1
+            continue
+        for source_id in resolved_source_ids:
+            if source_id not in source_ids:
+                source_ids.append(source_id)
+
+    if source_ids:
+        trace.register_derived_sources(fingerprint(value), tuple(source_ids))
+    if unknown_source_count:
+        warnings.warn(
+            f"pylier.derive() could not resolve {unknown_source_count} declared source"
+            f"{'s' if unknown_source_count != 1 else ''}; continuing with known lineage",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return value
+
+
 def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> None:
     """Register the node call and infer inbound edges from arg fingerprints.
 
@@ -179,20 +221,19 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> Non
     capture = _capture_values_enabled()
     fired: list[dict[str, str]] = []
     for arg in (*args, *kwargs.values()):
-        fp = fingerprint(arg)
-        source_id = trace.lookup_source(fp)
-        if source_id is None or source_id == meta.id:
-            continue
-        trace.add_edge(
-            source_id,
-            meta.id,
-            payload_type=type_name(arg),
-            size=size_of(arg) if level >= Level.INFO else None,
-            preview=preview_of(arg) if level >= Level.DEBUG else None,
-            payload_types=tuple_member_type_names(arg),
-            value=serialize_value(arg) if capture else None,
-        )
-        fired.append({"source": source_id, "target": meta.id})
+        for source_id in trace.lookup_sources(fingerprint(arg)):
+            if source_id == meta.id:
+                continue
+            trace.add_edge(
+                source_id,
+                meta.id,
+                payload_type=type_name(arg),
+                size=size_of(arg) if level >= Level.INFO else None,
+                preview=preview_of(arg) if level >= Level.DEBUG else None,
+                payload_types=tuple_member_type_names(arg),
+                value=serialize_value(arg) if capture else None,
+            )
+            fired.append({"source": source_id, "target": meta.id})
     trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="enter", edges=fired))
 
 

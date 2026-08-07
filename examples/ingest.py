@@ -56,7 +56,10 @@ def run_pipeline(name: str) -> int:
         image_chunks = ocr_images(doc)
         text_vecs = embed(text_chunks)
         image_vecs = embed(image_chunks)
-        total = index(text_vecs + image_vecs)
+        # List concatenation creates a new value, so preserve both producers
+        # without adding a synthetic transform node to the graph.
+        vectors = pylier.derive(text_vecs + image_vecs, from_=[text_vecs, image_vecs])
+        total = index(vectors)
     return total
 
 
@@ -80,7 +83,9 @@ def main(mode: str) -> None:
                     image_chunks = ocr_images(doc)
                     text_vecs = embed(text_chunks)
                     image_vecs = embed(image_chunks)
-                    total = index(text_vecs + image_vecs)
+                    # Keep direct edges from both embedding branches to index.
+                    vectors = pylier.derive(text_vecs + image_vecs, from_=[text_vecs, image_vecs])
+                    total = index(vectors)
                     print(f"doc {i}: indexed {total} vectors")
                     time.sleep(2.0)
                 input("press enter to stop...")

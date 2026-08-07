@@ -21,11 +21,14 @@ or a live in-process viewer. API mirrors logfire's flat, decoration-first feel:
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
 from pylier.model import Edge, Event, Level, Node, Trace
+from pylier.recorder import (
+    derive_value as _derive_value,
+)
 from pylier.recorder import (
     mark_last_trace,
     reset_trace,
@@ -40,6 +43,7 @@ from pylier.server import serve
 
 __all__ = [
     "node",
+    "derive",
     "trace",
     "render",
     "serve",
@@ -55,6 +59,27 @@ __all__ = [
 ]
 
 __version__ = "0.1.0"
+
+
+def derive[T](value: T, *, from_: Iterable[object]) -> T:
+    """Preserve declared runtime lineage for a computed plain value.
+
+    Use this after an expression such as ``title + body`` when its contributing
+    values came from decorated nodes. It returns ``value`` unchanged, but a
+    later decorated consumer receives an inferred edge from every resolved
+    source. Unknown sources emit a :class:`RuntimeWarning` and are ignored.
+
+    Args:
+        value: The computed value to return unchanged.
+        from_: Values that contributed to ``value``.
+
+    Returns:
+        The original ``value``.
+
+    Raises:
+        TypeError: If ``from_`` is a string/bytes value or is not iterable.
+    """
+    return _derive_value(value, from_=from_)
 
 
 def node(

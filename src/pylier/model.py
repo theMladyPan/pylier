@@ -103,6 +103,10 @@ class Trace:
         # so a transformed-but-equal-content value still links to the most recent
         # origin, which is what callers actually consume.
         self._fp_index: dict[str, str] = {}
+        # Derived values retain a resolved set of producer node IDs. This stays
+        # fingerprint-agnostic: recorder.py computes fingerprints and passes
+        # opaque keys here.
+        self._derived_sources: dict[str, tuple[str, ...]] = {}
         # live-change notification: two versions sharing one condition.
         # graph_version bumps only when topology changes (new node/edge) so SSE
         # pushes the full graph rarely; exec_version bumps on every enter/exit
@@ -217,10 +221,25 @@ class Trace:
             return edge
 
     def register_return(self, fingerprint: str, node_id: str) -> None:
-        self._fp_index[fingerprint] = node_id
+        """Register the latest direct producer for a fingerprint."""
+        with self._cond:
+            self._derived_sources.pop(fingerprint, None)
+            self._fp_index[fingerprint] = node_id
 
-    def lookup_source(self, fingerprint: str) -> str | None:
-        return self._fp_index.get(fingerprint)
+    def register_derived_sources(self, fingerprint: str, source_ids: tuple[str, ...]) -> None:
+        """Register resolved producers for a value derived outside a node."""
+        with self._cond:
+            self._fp_index.pop(fingerprint, None)
+            self._derived_sources[fingerprint] = source_ids
+
+    def lookup_sources(self, fingerprint: str) -> tuple[str, ...]:
+        """Return the direct or derived producer IDs for a fingerprint."""
+        with self._cond:
+            derived_sources = self._derived_sources.get(fingerprint)
+            if derived_sources is not None:
+                return derived_sources
+            direct_source = self._fp_index.get(fingerprint)
+            return (direct_source,) if direct_source is not None else ()
 
     def to_graph_dict(self) -> dict:
         """Serialize to the JSON shape consumed by the D3 renderer.
