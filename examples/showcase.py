@@ -1,0 +1,304 @@
+"""E-commerce fulfillment showcase for pylier.
+
+Run::
+
+    uv run python -m examples.showcase html
+    uv run python -m examples.showcase serve
+
+The generated graph demonstrates inferred data flow, payload type colors,
+node tags, sync/async calls, capture levels, captured values, static replay,
+SSE updates, and a resolved JSONL sidecar.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import pylier
+from pylier.config import reload_settings
+from pylier.model import Level, Trace
+
+
+@dataclass(frozen=True)
+class RiskAssessment:
+    """Synthetic debug-only fraud assessment passed to fulfillment assembly."""
+
+    score: float
+    reason: str
+
+
+@dataclass(frozen=True)
+class FulfillmentPackage:
+    """Custom payload proving that unknown application types stay visible."""
+
+    order_id: str
+    warehouse: str
+    shipping_cost: float
+    label: bytes
+
+
+@dataclass(frozen=True)
+class ShowcaseArtifacts:
+    """Files produced by the static showcase command."""
+
+    full_html: Path
+    info_html: Path
+    sidecar: Path
+
+
+@pylier.node(_tags=["order", "input"])
+def create_order() -> dict[str, Any]:
+    """Create one synthetic customer order."""
+    return {
+        "id": "ord-1042",
+        "customer": "Ada Lovelace",
+        "destination": "EU-CENTRAL",
+        "items": [
+            {"sku": "keyboard", "quantity": 1, "unit_price": 129.0},
+            {"sku": "cable", "quantity": 2, "unit_price": 9.5},
+        ],
+    }
+
+
+@pylier.node(_tags=["order", "validation"])
+def validate_order(order: dict[str, Any]) -> tuple[bool, float, str]:
+    """Return a mixed approval tuple for the tuple-gradient edge."""
+    return True, 12.75, "approved"
+
+
+@pylier.node(_tags=["order", "items"])
+def extract_items(order: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract line items while preserving the direct order handoff."""
+    return list(order["items"])
+
+
+@pylier.node(_tags=["order", "priority"])
+def is_priority_order(order: dict[str, Any]) -> bool:
+    """Classify the synthetic order for a boolean handoff."""
+    return len(order["items"]) > 1
+
+
+@pylier.node(_tags=["shipping", "zone"])
+def shipping_zone(order: dict[str, Any]) -> str:
+    """Read the destination zone for downstream shipping pricing."""
+    return str(order["destination"])
+
+
+@pylier.node(_tags=["inventory", "warehouses"])
+def choose_warehouses(items: list[dict[str, Any]]) -> set[str]:
+    """Select candidate warehouses for the required item set."""
+    return {"brno-01", "prague-02"} if items else set()
+
+
+@pylier.node(_tags=["inventory", "count"])
+def count_items(items: list[dict[str, Any]]) -> int:
+    """Count line items for a scalar integer handoff."""
+    return sum(int(item["quantity"]) for item in items)
+
+
+@pylier.node(level="debug", _tags=["risk", "debug"])
+def audit_risk(order: dict[str, Any]) -> RiskAssessment:
+    """Produce a debug-only custom payload for the level comparison artifact."""
+    return RiskAssessment(score=0.08, reason=f"synthetic check for {order['id']}")
+
+
+@pylier.node(_tags=["inventory", "async"])
+async def reserve_inventory(items: list[dict[str, Any]], warehouses: set[str]) -> dict[str, Any]:
+    """Reserve stock asynchronously from the selected warehouses."""
+    await asyncio.sleep(0)
+    return {
+        "reservation": "res-771",
+        "warehouse": sorted(warehouses)[0],
+        "sku_count": len(items),
+    }
+
+
+@pylier.node(_tags=["shipping", "async"])
+async def quote_shipping(zone: str, item_count: int) -> float:
+    """Quote shipping asynchronously from a zone and item count."""
+    await asyncio.sleep(0)
+    return round(4.99 + item_count * 1.25 + (1.5 if zone == "EU-CENTRAL" else 0), 2)
+
+
+@pylier.node(_tags=["shipping", "label", "async"])
+async def purchase_shipping_label(order: dict[str, Any], reservation: dict[str, Any]) -> bytes:
+    """Produce a binary carrier label asynchronously."""
+    await asyncio.sleep(0)
+    return f"LABEL:{order['id']}:{reservation['reservation']}".encode()
+
+
+@pylier.node(_tags=["fulfillment", "assembly"])
+def assemble_fulfillment(
+    approval: tuple[bool, float, str],
+    priority: bool,
+    risk: RiskAssessment,
+    reservation: dict[str, Any],
+    shipping_cost: float,
+    label: bytes,
+) -> FulfillmentPackage:
+    """Combine direct handoffs into the custom fulfillment package."""
+    approved, _tax, status = approval
+    if not approved or status != "approved" or risk.score > 0.5:
+        raise RuntimeError("synthetic order was not approved")
+    return FulfillmentPackage(
+        order_id=reservation["reservation"].replace("res", "ord"),
+        warehouse=str(reservation["warehouse"]),
+        shipping_cost=shipping_cost if priority else shipping_cost + 2.0,
+        label=label,
+    )
+
+
+@pylier.node(_tags=["fulfillment", "output"])
+def publish_fulfillment(package: FulfillmentPackage) -> str:
+    """Publish a synthetic fulfillment receipt."""
+    return f"published:{package.order_id}:{package.warehouse}"
+
+
+async def run_fulfillment(
+    name: str,
+    *,
+    level: Level = Level.DEBUG,
+    sidecar: Path | None = None,
+    stage_delay: float = 0.0,
+) -> Trace:
+    """Record one fulfillment run at the requested capture level.
+
+    Args:
+        name: Trace name shown in the generated viewer.
+        level: Active pylier capture level for the run.
+        sidecar: Optional file receiving already-resolved JSONL events.
+        stage_delay: Seconds to wait after each visible workflow stage.
+
+    Returns:
+        The completed in-memory trace.
+    """
+    with _capture_synthetic_values(), pylier.set_level(level), pylier.trace(name, sidecar=sidecar or False) as trace:
+        await _execute_fulfillment(stage_delay)
+    return trace
+
+
+def write_html_artifacts(output_dir: Path = Path(".")) -> ShowcaseArtifacts:
+    """Generate the full, level-comparison, and sidecar showcase artifacts.
+
+    Args:
+        output_dir: Directory receiving generated HTML and JSONL files.
+
+    Returns:
+        Paths to the generated showcase files.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    full_html = output_dir / "pylier-fulfillment-showcase.html"
+    info_html = output_dir / "pylier-fulfillment-info.html"
+    sidecar = output_dir / "pylier-fulfillment.jsonl"
+    sidecar.unlink(missing_ok=True)
+
+    full_trace = asyncio.run(run_fulfillment("fulfillment-showcase", sidecar=sidecar))
+    info_trace = asyncio.run(run_fulfillment("fulfillment-info", level=Level.INFO))
+    pylier.render(full_html, trace=full_trace)
+    pylier.render(info_html, trace=info_trace)
+    return ShowcaseArtifacts(full_html=full_html, info_html=info_html, sidecar=sidecar)
+
+
+async def serve_fulfillment(output_dir: Path = Path("."), stage_delay: float = 0.75) -> None:
+    """Run the fulfillment trace in the existing live SSE viewer.
+
+    Args:
+        output_dir: Directory receiving the resolved live JSONL sidecar.
+        stage_delay: Seconds between stages so graph evolution is observable.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = output_dir / "pylier-fulfillment-live.jsonl"
+    sidecar.unlink(missing_ok=True)
+    with (
+        _capture_synthetic_values(),
+        pylier.set_level("debug"),
+        pylier.trace("fulfillment-live", sidecar=sidecar) as trace,
+    ):
+        server = pylier.serve(trace=trace)
+        print("viewer open — streaming fulfillment stages...")
+        try:
+            await _execute_fulfillment(stage_delay)
+            print(f"live run complete; resolved sidecar: {sidecar}")
+            input("press Enter to stop the viewer...")
+        except EOFError:
+            pass
+        finally:
+            server.shutdown()
+
+
+async def _execute_fulfillment(stage_delay: float) -> str:
+    """Execute the direct-handoff flow in whichever trace is active."""
+    order = create_order()
+    await _pause(stage_delay)
+    approval = validate_order(order)
+    await _pause(stage_delay)
+    items = extract_items(order)
+    await _pause(stage_delay)
+    priority = is_priority_order(order)
+    await _pause(stage_delay)
+    zone = shipping_zone(order)
+    await _pause(stage_delay)
+    warehouses = choose_warehouses(items)
+    await _pause(stage_delay)
+    item_count = count_items(items)
+    await _pause(stage_delay)
+    risk = audit_risk(order)
+    await _pause(stage_delay)
+    reservation = await reserve_inventory(items, warehouses)
+    await _pause(stage_delay)
+    shipping_cost = await quote_shipping(zone, item_count)
+    await _pause(stage_delay)
+    label = await purchase_shipping_label(order, reservation)
+    await _pause(stage_delay)
+    package = assemble_fulfillment(approval, priority, risk, reservation, shipping_cost, label)
+    await _pause(stage_delay)
+    return publish_fulfillment(package)
+
+
+@contextlib.contextmanager
+def _capture_synthetic_values():
+    """Enable edge-value capture only while the demo records harmless data."""
+    prior_value = os.environ.get("PYLIER_CAPTURE_VALUES")
+    os.environ["PYLIER_CAPTURE_VALUES"] = "true"
+    reload_settings()
+    try:
+        yield
+    finally:
+        if prior_value is None:
+            os.environ.pop("PYLIER_CAPTURE_VALUES", None)
+        else:
+            os.environ["PYLIER_CAPTURE_VALUES"] = prior_value
+        reload_settings()
+
+
+async def _pause(stage_delay: float) -> None:
+    """Wait only in live mode; static and test runs stay immediate."""
+    if stage_delay > 0:
+        await asyncio.sleep(stage_delay)
+
+
+def main() -> None:
+    """Parse CLI arguments and run the requested showcase mode."""
+    parser = argparse.ArgumentParser(description="pylier e-commerce fulfillment showcase")
+    parser.add_argument("mode", choices=("html", "serve"), nargs="?", default="html")
+    parser.add_argument("--output-dir", type=Path, default=Path("."))
+    parser.add_argument("--stage-delay", type=float, default=0.75)
+    args = parser.parse_args()
+
+    if args.mode == "html":
+        artifacts = write_html_artifacts(args.output_dir)
+        print(f"full showcase: {artifacts.full_html}")
+        print(f"level comparison: {artifacts.info_html}")
+        print(f"resolved sidecar: {artifacts.sidecar}")
+    else:
+        asyncio.run(serve_fulfillment(args.output_dir, args.stage_delay))
+
+
+if __name__ == "__main__":
+    main()

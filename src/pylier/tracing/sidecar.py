@@ -1,9 +1,9 @@
 """JSONL sidecar sink.
 
-Appends edge-resolved events to a JSONL file so offline replays and the live
-viewer server can reconstruct the graph without sharing memory with the
-recording process. This is the offline/replay half of the logfire-style
-transport: the live viewer server (``pylier.serve``) tails this file.
+Appends edge-resolved events to a JSONL file for offline inspection and future
+cross-process replay. This is the offline half of the logfire-style transport;
+the current live viewer observes only its in-memory trace and does not tail a
+sidecar file.
 """
 
 from __future__ import annotations
