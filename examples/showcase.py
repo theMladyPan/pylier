@@ -1,13 +1,58 @@
-"""E-commerce fulfillment showcase for pylier.
+"""Runnable evaluator and developer guide for the pylier fulfillment showcase.
 
-Run::
+Quick start:
 
     uv run python -m examples.showcase html
+
+The ``html`` command writes three artifacts in the working directory:
+
+* ``pylier-fulfillment-showcase.html`` is the complete debug-level interactive
+  graph.
+* ``pylier-fulfillment-info.html`` records the same flow at ``INFO`` level;
+  its debug-only ``audit_risk`` node is intentionally absent.
+* ``pylier-fulfillment.jsonl`` contains resolved sidecar events for offline
+  inspection.
+
+Open the full HTML artifact in a browser. Click nodes to inspect their tags,
+click edges to inspect their harmless synthetic captured payloads, choose tags
+in the left filter pane, and compare the full graph with the INFO artifact.
+
+What to look for in this fulfillment flow:
+
+* Decorated return values are passed directly into decorated consumers, so
+  pylier infers every edge without explicit wiring.
+* Payload edges cover ``int``, ``float``, ``str``, ``list``, ``dict``,
+  ``set``, ``bytes``, and custom application objects; the viewer colors them
+  by type. The approval tuple also carries its ``bool`` member type.
+* ``validate_order → assemble_fulfillment`` carries a mixed
+  ``tuple[bool, float, str]`` edge, rendered as a tuple gradient.
+* ``rank_items → expand_rank → rank_items`` is a real inferred data-flow
+  cycle. It demonstrates a bounded refinement loop without recursive calls.
+* Tags such as ``order``, ``inventory``, ``shipping``, ``loop``, and ``async``
+  power both the filter pane and node inspector.
+* ``reserve_inventory``, ``quote_shipping``, and
+  ``purchase_shipping_label`` are decorated async nodes.
+* ``audit_risk`` is declared at ``level=\"debug\"`` to make the capture-level
+  comparison visible.
+* The showcase enables value capture only for these harmless synthetic
+  payloads; pylier keeps captured values opt-in by default.
+* Opening static HTML replays its recorded enter/exit execution timeline.
+* The JSONL sidecar records already-resolved node and edge events and never
+  re-fingerprints payloads.
+
+Live SSE walkthrough:
+
     uv run python -m examples.showcase serve
 
-The generated graph demonstrates inferred data flow, payload type colors,
-node tags, sync/async calls, capture levels, captured values, static replay,
-SSE updates, and a resolved JSONL sidecar.
+The command starts ``pylier.serve()`` for the active in-memory trace, opens the
+viewer, and autoplays each fulfillment stage with a 0.75-second pause. It also
+writes ``pylier-fulfillment-live.jsonl`` and waits for Enter after completion
+so the final graph remains inspectable. Use ``--stage-delay 0.4`` for a faster
+tour or ``--output-dir demo-output`` to collect artifacts elsewhere.
+
+The live viewer follows one in-memory trace only. The JSONL sidecar is an
+offline resolved artifact, not a cross-process live viewer input. OTel support
+is planned; it is not demonstrated or implemented here.
 """
 
 from __future__ import annotations
@@ -78,12 +123,6 @@ def extract_items(order: dict[str, Any]) -> list[dict[str, Any]]:
     return list(order["items"])
 
 
-@pylier.node(_tags=["order", "priority"])
-def is_priority_order(order: dict[str, Any]) -> bool:
-    """Classify the synthetic order for a boolean handoff."""
-    return len(order["items"]) > 1
-
-
 @pylier.node(_tags=["shipping", "zone"])
 def shipping_zone(order: dict[str, Any]) -> str:
     """Read the destination zone for downstream shipping pricing."""
@@ -96,10 +135,16 @@ def choose_warehouses(items: list[dict[str, Any]]) -> set[str]:
     return {"brno-01", "prague-02"} if items else set()
 
 
-@pylier.node(_tags=["inventory", "count"])
-def count_items(items: list[dict[str, Any]]) -> int:
-    """Count line items for a scalar integer handoff."""
+@pylier.node(_tags=["inventory", "loop"])
+def rank_items(items: list[dict[str, Any]]) -> int:
+    """Reduce items to a synthetic rank used by the bounded refinement loop."""
     return sum(int(item["quantity"]) for item in items)
+
+
+@pylier.node(_tags=["inventory", "loop"])
+def expand_rank(rank: int) -> list[dict[str, Any]]:
+    """Expand a rank back into items so the next rank call closes the cycle."""
+    return [{"sku": "refined", "quantity": 1} for _ in range(rank)]
 
 
 @pylier.node(level="debug", _tags=["risk", "debug"])
@@ -136,7 +181,6 @@ async def purchase_shipping_label(order: dict[str, Any], reservation: dict[str, 
 @pylier.node(_tags=["fulfillment", "assembly"])
 def assemble_fulfillment(
     approval: tuple[bool, float, str],
-    priority: bool,
     risk: RiskAssessment,
     reservation: dict[str, Any],
     shipping_cost: float,
@@ -149,7 +193,7 @@ def assemble_fulfillment(
     return FulfillmentPackage(
         order_id=reservation["reservation"].replace("res", "ord"),
         warehouse=str(reservation["warehouse"]),
-        shipping_cost=shipping_cost if priority else shipping_cost + 2.0,
+        shipping_cost=shipping_cost,
         label=label,
     )
 
@@ -240,13 +284,17 @@ async def _execute_fulfillment(stage_delay: float) -> str:
     await _pause(stage_delay)
     items = extract_items(order)
     await _pause(stage_delay)
-    priority = is_priority_order(order)
+    # Reusing rank_items after expand_rank intentionally records rank → expand → rank.
+    # This bounded data cycle is visible in the graph without recursive execution.
+    initial_rank = rank_items(items)
+    await _pause(stage_delay)
+    refined_items = expand_rank(initial_rank)
+    await _pause(stage_delay)
+    item_count = rank_items(refined_items)
     await _pause(stage_delay)
     zone = shipping_zone(order)
     await _pause(stage_delay)
     warehouses = choose_warehouses(items)
-    await _pause(stage_delay)
-    item_count = count_items(items)
     await _pause(stage_delay)
     risk = audit_risk(order)
     await _pause(stage_delay)
@@ -256,7 +304,7 @@ async def _execute_fulfillment(stage_delay: float) -> str:
     await _pause(stage_delay)
     label = await purchase_shipping_label(order, reservation)
     await _pause(stage_delay)
-    package = assemble_fulfillment(approval, priority, risk, reservation, shipping_cost, label)
+    package = assemble_fulfillment(approval, risk, reservation, shipping_cost, label)
     await _pause(stage_delay)
     return publish_fulfillment(package)
 

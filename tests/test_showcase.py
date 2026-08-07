@@ -18,6 +18,19 @@ sys.modules[_SHOWCASE_SPEC.name] = showcase
 _SHOWCASE_SPEC.loader.exec_module(showcase)
 
 
+def test_showcase_embeds_its_user_guide_in_the_module_docstring():
+    guide = showcase.__doc__ or ""
+
+    assert "uv run python -m examples.showcase html" in guide
+    assert "pylier-fulfillment-showcase.html" in guide
+    assert "pylier-fulfillment-info.html" in guide
+    assert "pylier-fulfillment.jsonl" in guide
+    assert "uv run python -m examples.showcase serve" in guide
+    assert "0.75-second pause" in guide
+    assert "cross-process live viewer input" in guide
+    assert not (Path(__file__).parents[1] / "docs" / "showcase-guide.md").exists()
+
+
 def test_debug_showcase_exercises_supported_graph_semantics():
     trace = asyncio.run(showcase.run_fulfillment("showcase-debug", level=Level.DEBUG))
     graph = trace.to_graph_dict()
@@ -26,9 +39,15 @@ def test_debug_showcase_exercises_supported_graph_semantics():
     payload_types = {edge["payload"] for edge in graph["links"]}
     tagged_nodes = {node["name"]: node["tags"] for node in graph["nodes"]}
 
+    edge_pairs = {(edge["source"], edge["target"]) for edge in graph["links"]}
+
     assert "audit_risk" in node_names
-    assert {"bool", "int", "float", "str", "list", "dict", "set", "tuple", "bytes"} <= payload_types
+    assert "is_priority_order" not in node_names
+    assert {"int", "float", "str", "list", "dict", "set", "tuple", "bytes"} <= payload_types
     assert {"RiskAssessment", "FulfillmentPackage"} <= payload_types
+    assert ("pylier_showcase.rank_items", "pylier_showcase.expand_rank") in edge_pairs
+    assert ("pylier_showcase.expand_rank", "pylier_showcase.rank_items") in edge_pairs
+    assert tagged_nodes["rank_items"] == ["inventory", "loop"]
     assert tagged_nodes["reserve_inventory"] == ["inventory", "async"]
     assert any(node["is_async"] for node in graph["nodes"])
     assert any(edge["payload_types"] == ["bool", "float", "str"] for edge in graph["links"])
