@@ -1,0 +1,237 @@
+"""Core pylier behavior: node decoration, edge inference, levels, rendering."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+import pylier
+
+
+def test_sync_edge_inferred_from_returned_value():
+    @pylier.node
+    def producer():
+        return {"doc": "hello"}
+
+    @pylier.node
+    def consumer(payload):
+        return payload["doc"]
+
+    with pylier.trace("t") as tr:
+        out = consumer(producer())
+
+    assert out == "hello"
+    ids = list(tr.nodes)
+    assert len(ids) == 2
+    assert len(tr.edges) == 1
+    (src, tgt), edge = next(iter(tr.edges.items()))
+    assert src.endswith("producer")
+    assert tgt.endswith("consumer")
+    assert edge.payload_type == "dict"
+
+
+def test_tags_flow_to_edge_payload_kind():
+    @pylier.node
+    def emit():
+        return "trigger-val"
+
+    @pylier.node(payload_kind="trigger")
+    def handle(event):
+        return event
+
+    with pylier.trace() as tr:
+        handle(emit())
+
+    edge = next(iter(tr.edges.values()))
+    assert edge.tags["payload_kind"] == "trigger"
+
+
+def test_branching_pipeline_inferred():
+    @pylier.node
+    def load():
+        return "raw"
+
+    @pylier.node
+    def branch_a(data):
+        return data + "-a"
+
+    @pylier.node
+    def branch_b(data):
+        return data + "-b"
+
+    @pylier.node
+    def merge(a, b):
+        return a + "|" + b
+
+    with pylier.trace() as tr:
+        raw = load()
+        merge(branch_a(raw), branch_b(raw))
+
+    assert len(tr.nodes) == 4
+    # load -> a, load -> b, a -> merge, b -> merge
+    assert len(tr.edges) == 4
+    targets_of_load = {tgt for (src, tgt), e in tr.edges.items() if src.endswith("load")}
+    assert {t.rsplit(".", 1)[-1] for t in targets_of_load} == {"branch_a", "branch_b"}
+
+
+def test_async_node_infers_edge():
+    @pylier.node
+    async def fetch():
+        await asyncio.sleep(0)
+        return [1, 2, 3]
+
+    @pylier.node
+    async def summarize(data):
+        return sum(data)
+
+    async def run():
+        with pylier.trace("async") as tr:
+            result = await summarize(await fetch())
+            return result, tr
+
+    result, tr = asyncio.run(run())
+    assert result == 6
+    assert len(tr.edges) == 1
+    assert next(iter(tr.edges.values())).payload_type == "list"
+
+
+def test_level_filters_uncaptured_nodes():
+    @pylier.node(level="trace")
+    def verbose():
+        return "v"
+
+    @pylier.node
+    def core():
+        return verbose()
+
+    # default level is INFO; the "trace"-level node is not captured
+    with pylier.trace() as tr:
+        core()
+
+    assert len(tr.nodes) == 1
+    assert next(iter(tr.nodes)).endswith("core")
+
+
+def test_set_level_enables_verbose_node():
+    @pylier.node(level="trace")
+    def verbose():
+        return "v"
+
+    @pylier.node
+    def core():
+        return verbose()
+
+    with pylier.set_level("trace"), pylier.trace() as tr:
+        core()
+
+    assert len(tr.nodes) == 2
+
+
+def test_render_writes_self_contained_html(tmp_path: Path):
+    @pylier.node
+    def a():
+        return [1, 2]
+
+    @pylier.node
+    def b(data):
+        return sum(data)
+
+    with pylier.trace("render-test") as tr:
+        b(a())
+
+    out = pylier.render(tmp_path / "out.html", trace=tr)
+    assert out.exists()
+    html = out.read_text(encoding="utf-8")
+    assert "d3@7" in html
+    assert "render-test" in html
+    # embedded JSON must be valid: extract the RAW object literal
+    start = html.index("const RAW = ") + len("const RAW = ")
+    obj_start = html.index("{", start)
+    depth = 0
+    i = obj_start
+    while i < len(html):
+        if html[i] == "{":
+            depth += 1
+        elif html[i] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    graph = json.loads(html[obj_start : i + 1])
+    assert graph["name"] == "render-test"
+    assert len(graph["nodes"]) == 2
+    assert len(graph["links"]) == 1
+
+
+def test_trace_isolation_between_contexts():
+    @pylier.node
+    def f():
+        return 1
+
+    @pylier.node
+    def g(x):
+        return x + 1
+
+    with pylier.trace("first") as tr1:
+        g(f())
+
+    with pylier.trace("second") as tr2:
+        g(f())
+
+    assert len(tr1.nodes) == 2 and len(tr2.nodes) == 2
+    assert tr1 is not tr2
+
+
+def test_sidecar_writes_events(tmp_path: Path):
+    @pylier.node
+    def produce():
+        return "payload"
+
+    @pylier.node
+    def consume(data):
+        return data.upper()
+
+    sidecar_file = tmp_path / "trace.jsonl"
+    with pylier.trace("sidecar", sidecar=sidecar_file):
+        consume(produce())
+
+    assert sidecar_file.exists()
+    lines = [json.loads(line) for line in sidecar_file.read_text().splitlines() if line.strip()]
+    # one exit-event per captured node
+    assert len(lines) == 2
+    assert all("node_id" in ev and "edges" in ev for ev in lines)
+
+
+def test_size_and_preview_captured_at_debug():
+    @pylier.node
+    def produce():
+        return [1, 2, 3]
+
+    @pylier.node
+    def consume(data):
+        return sum(data)
+
+    with pylier.set_level("debug"), pylier.trace() as tr:
+        consume(produce())
+
+    edge = next(iter(tr.edges.values()))
+    assert edge.size == 3
+    assert edge.preview is not None
+
+
+def test_size_not_captured_at_core():
+    @pylier.node(level="core")
+    def produce():
+        return [1, 2, 3]
+
+    @pylier.node(level="core")
+    def consume(data):
+        return sum(data)
+
+    with pylier.set_level("core"), pylier.trace() as tr:
+        consume(produce())
+
+    edge = next(iter(tr.edges.values()))
+    assert edge.size is None
+    assert edge.preview is None
