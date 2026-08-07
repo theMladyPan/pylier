@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>pylier mockup 09 — expandable nested node</title>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#7d8590; --rule:#30363d; --blue:#2f81f7; --green:#3fb950; --pink:#f778ba; --amber:#d29922; }
+* { box-sizing:border-box; } html,body { margin:0; height:100%; } body { background:var(--bg); color:var(--ink); font:13px ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; }
+header { height:68px; display:flex; align-items:center; gap:14px; padding:0 24px; border-bottom:1px solid var(--rule); background:var(--panel); }
+h1 { margin:0; font:700 20px ui-sans-serif,system-ui; letter-spacing:-.04em; } .crumb,.muted { color:var(--muted); } .spacer { flex:1; } .stamp { border:1px solid var(--green); color:var(--green); padding:5px 8px; font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+main { height:calc(100% - 68px); display:grid; grid-template-columns:minmax(0,1fr) 310px; } #stage { width:100%; height:100%; background-image:radial-gradient(#21262d .7px,transparent .7px); background-size:18px 18px; } aside { border-left:1px solid var(--rule); background:var(--bg); } section { padding:18px; border-bottom:1px solid var(--rule); } h2 { margin:0 0 14px; color:var(--muted); text-transform:uppercase; letter-spacing:.13em; font-size:10px; } p { margin:0; font:13px/1.55 ui-sans-serif,system-ui; color:#b1bac4; } .row { display:grid; grid-template-columns:92px 1fr; gap:8px; padding:7px 0; border-bottom:1px dotted var(--rule); } .row span { color:var(--muted); }
+.card { fill:var(--panel); stroke:var(--rule); stroke-width:1; } .card.external { stroke:#586069; } .card.parent { stroke:var(--blue); stroke-width:1.5; } .card.child { stroke:var(--rule); } .name { fill:var(--ink); font-size:14px; font-weight:700; } .module { fill:var(--muted); font-size:10px; } .small { fill:var(--muted); font-size:9px; } .latency { fill:var(--ink); font-size:10px; text-anchor:end; } .edge { fill:none; stroke:#7d8590; stroke-width:1.5; marker-end:url(#arrow); } .edge.internal { stroke:var(--blue); stroke-dasharray:4 3; } .edge.output { stroke:var(--green); } .edge-label { fill:var(--muted); font-size:9px; paint-order:stroke; stroke:var(--bg); stroke-width:5px; } .group { fill:color-mix(in srgb,var(--blue) 7%,transparent); stroke:var(--blue); stroke-width:1; stroke-dasharray:5 3; } .group-head { fill:color-mix(in srgb,var(--blue) 17%,var(--panel)); cursor:pointer; } .group-label { fill:var(--blue); font-size:11px; font-weight:700; cursor:pointer; } .port { fill:var(--bg); stroke:var(--blue); stroke-width:2; } .port.output { stroke:var(--green); } .port-label { fill:var(--muted); font-size:9px; } .hint { fill:var(--amber); font-size:10px; } .hidden { display:none; }
+</style>
+</head>
+<body>
+<header><h1>pylier</h1><span class="crumb">/ document ingest · nested node prototype</span><span class="stamp">mockup</span><span class="spacer"></span><span class="muted">click <b>process_document</b> to expand / collapse</span></header>
+<main>
+<svg id="stage" viewBox="0 0 1120 650" role="img" aria-label="Expandable parent node with internal decorated subnodes">
+  <defs><marker id="arrow" viewBox="0 -4 8 8" refX="7" refY="0" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,-4L8,0L0,4Z" fill="#7d8590" /></marker></defs>
+  <text x="80" y="96" class="small">OUTER PIPELINE</text><line x1="80" y1="106" x2="1030" y2="106" stroke="#21262d" stroke-dasharray="3 5" />
+
+  <g id="load" transform="translate(170 315)"><rect class="card external" x="-105" y="-33" width="210" height="66" rx="3"/><text class="small" x="-91" y="-15">01</text><text class="name" x="-91" y="4">load_document</text><text class="module" x="-91" y="22">sources.files</text><text class="latency" x="93" y="-15">38 ms</text></g>
+  <g id="index" transform="translate(960 315)"><rect class="card external" x="-95" y="-33" width="190" height="66" rx="3"/><text class="small" x="-81" y="-15">03</text><text class="name" x="-81" y="4">write_index</text><text class="module" x="-81" y="22">sinks.vector</text><text class="latency" x="83" y="-15">83 ms</text></g>
+
+  <g id="outer-collapsed-edges"><path class="edge" d="M275,315 H364"/><text class="edge-label" x="300" y="301">Document</text><path class="edge output" d="M756,315 H865"/><text class="edge-label" x="790" y="301">Chunks</text></g>
+  <g id="outer-expanded-edges" class="hidden"><path class="edge" d="M275,315 H343"/><text class="edge-label" x="300" y="301">Document</text><path class="edge output" d="M777,315 H865"/><text class="edge-label" x="800" y="301">Chunks</text></g>
+
+  <!-- collapsed parent: it keeps the original single-node silhouette -->
+  <g id="collapsed">
+    <g transform="translate(560 315)"><rect class="card parent" x="-196" y="-48" width="392" height="96" rx="4"/><rect x="-196" y="-48" width="6" height="96" fill="#2f81f7"/><text class="small" x="-178" y="-22">02 · DECORATED PARENT</text><text class="name" x="-178" y="2">▸ process_document</text><text class="module" x="-178" y="23">pipeline.document · 3 nested nodes</text><text class="latency" x="178" y="-22">627 ms</text><circle class="port" cx="-196" cy="0" r="6"/><circle class="port output" cx="196" cy="0" r="6"/></g>
+  </g>
+
+  <!-- expanded parent: same outer boundary, children live only inside it -->
+  <g id="expanded" class="hidden">
+    <rect class="group" x="350" y="150" width="420" height="330" rx="6"/>
+    <rect class="group-head" x="350" y="150" width="236" height="26" rx="5"/>
+    <text class="group-label" x="362" y="167">▾ process_document · collapse</text>
+    <text class="hint" x="598" y="168">parent boundary stays visible</text>
+
+    <!-- parent boundary adapter ports -->
+    <circle class="port" cx="350" cy="315" r="7"/><text class="port-label" x="361" y="299">parent input · Document</text>
+    <circle class="port output" cx="770" cy="315" r="7"/><text class="port-label" x="632" y="299">parent output · Chunks</text>
+
+    <!-- left adapter fans the parent input into decorated child inputs -->
+    <path class="edge internal" d="M357,315 H390 V248 H415"/>
+    <path class="edge internal" d="M357,315 H390 V382 H415"/>
+    <text class="edge-label" x="366" y="342">pair parent input</text>
+
+    <g transform="translate(495 248)"><rect class="card child" x="-80" y="-28" width="160" height="56" rx="3"/><text class="name" x="-67" y="0">extract_text</text><text class="module" x="-67" y="17">decorated child</text><circle class="port" cx="-80" cy="0" r="4"/><circle class="port output" cx="80" cy="0" r="4"/></g>
+    <g transform="translate(495 382)"><rect class="card child" x="-80" y="-28" width="160" height="56" rx="3"/><text class="name" x="-67" y="0">ocr_images</text><text class="module" x="-67" y="17">decorated child</text><circle class="port" cx="-80" cy="0" r="4"/><circle class="port output" cx="80" cy="0" r="4"/></g>
+    <g transform="translate(665 315)"><rect class="card child" x="-75" y="-28" width="150" height="56" rx="3"/><text class="name" x="-62" y="0">merge_text</text><text class="module" x="-62" y="17">decorated child</text><circle class="port" cx="-75" cy="0" r="4"/><circle class="port output" cx="75" cy="0" r="4"/></g>
+
+    <!-- child outputs converge, then the final child output maps to parent output -->
+    <path class="edge internal" d="M575,248 H590 V315 H590"/><path class="edge internal" d="M575,382 H590 V315 H590"/>
+    <path class="edge internal" d="M590,315 H590"/><path class="edge output" d="M740,315 H763"/>
+    <text class="edge-label" x="603" y="282">child outputs</text><text class="edge-label" x="680" y="343">map final output</text>
+  </g>
+</svg>
+<aside>
+  <section><h2>Interaction</h2><p>Click the parent card. Collapsed: it remains one normal graph node. Expanded: the same parent becomes the dashed boundary around its nested decorated calls. Click the blue header to collapse again.</p></section>
+  <section><h2>Boundary mapping</h2><div class="row"><span>input</span><b>Document</b></div><div class="row"><span>fan-out</span><b>extract + OCR</b></div><div class="row"><span>join</span><b>merge_text</b></div><div class="row"><span>output</span><b>Chunks</b></div></section>
+  <section><h2>Rule to confirm</h2><p>Only direct decorated calls made by <b>process_document</b> appear inside this bubble. Other graph nodes never move into it. Blue dashed paths are parent-to-child input pairing; green path maps the final nested return to the parent output.</p></section>
+</aside>
+</main>
+<script>
+const collapsed = document.getElementById('collapsed');
+const expanded = document.getElementById('expanded');
+const outerCollapsedEdges = document.getElementById('outer-collapsed-edges');
+const outerExpandedEdges = document.getElementById('outer-expanded-edges');
+function toggle() {
+  collapsed.classList.toggle('hidden');
+  expanded.classList.toggle('hidden');
+  outerCollapsedEdges.classList.toggle('hidden');
+  outerExpandedEdges.classList.toggle('hidden');
+}
+document.getElementById('collapsed').addEventListener('click', toggle);
+document.querySelector('.group-head').addEventListener('click', toggle);
+document.querySelector('.group-label').addEventListener('click', toggle);
+</script>
+</body>
+</html>

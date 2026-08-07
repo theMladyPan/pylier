@@ -5,6 +5,8 @@ description = "Decorator-driven data process & pipeline visualization. Render ru
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "opentelemetry-api>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
     "pydantic-settings>=2.5",
 ]
 

@@ -42,6 +42,16 @@ def embed(chunks: list[str]) -> list[dict]:
     return [{"vec": [len(c), 0], "text": c} for c in chunks]
 
 
+@pylier.node(_tags=["document", "parent"])
+def process_document(doc: dict) -> list[dict]:
+    """Run the nested text/OCR/embedding document-processing stage."""
+    text_chunks = extract_text(doc)
+    image_chunks = ocr_images(doc)
+    text_vecs = embed(text_chunks)
+    image_vecs = embed(image_chunks)
+    return pylier.derive(text_vecs + image_vecs, from_=[text_vecs, image_vecs])
+
+
 @pylier.node(_tags=["indexing"])
 def index(vectors: list[dict]) -> int:
     time.sleep(_STEP_DELAY)
@@ -52,13 +62,7 @@ def run_pipeline(name: str) -> int:
     """Execute one full ingest run, returning the number of indexed vectors."""
     with pylier.trace(name):
         doc = load_document("report.pdf")
-        text_chunks = extract_text(doc)
-        image_chunks = ocr_images(doc)
-        text_vecs = embed(text_chunks)
-        image_vecs = embed(image_chunks)
-        # List concatenation creates a new value, so preserve both producers
-        # without adding a synthetic transform node to the graph.
-        vectors = pylier.derive(text_vecs + image_vecs, from_=[text_vecs, image_vecs])
+        vectors = process_document(doc)
         total = index(vectors)
     return total
 
@@ -79,12 +83,7 @@ def main(mode: str) -> None:
             try:
                 for i in range(1, 10):
                     doc = load_document("report.pdf")
-                    text_chunks = extract_text(doc)
-                    image_chunks = ocr_images(doc)
-                    text_vecs = embed(text_chunks)
-                    image_vecs = embed(image_chunks)
-                    # Keep direct edges from both embedding branches to index.
-                    vectors = pylier.derive(text_vecs + image_vecs, from_=[text_vecs, image_vecs])
+                    vectors = process_document(doc)
                     total = index(vectors)
                     print(f"doc {i}: indexed {total} vectors")
                     time.sleep(2.0)

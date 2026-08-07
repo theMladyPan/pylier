@@ -306,7 +306,10 @@ def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: 
     result: Any = None
     exc: BaseException | None = None
     try:
-        result = func(*args, **kwargs)
+        from pylier.tracing.otel import node_span
+
+        with node_span(meta.id):
+            result = func(*args, **kwargs)
         return result  # type: ignore[return-value]
     except BaseException as caught:
         exc = caught
@@ -325,7 +328,10 @@ async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]]
     result: Any = None
     exc: BaseException | None = None
     try:
-        result = await func(*args, **kwargs)
+        from pylier.tracing.otel import node_span
+
+        with node_span(meta.id):
+            result = await func(*args, **kwargs)
         return result  # type: ignore[return-value]
     except BaseException as caught:
         exc = caught

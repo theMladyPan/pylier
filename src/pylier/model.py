@@ -66,6 +66,20 @@ class Edge:
 
 
 @dataclass
+class Span:
+    """An OTel-compatible invocation captured for hierarchical rendering."""
+
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    name: str
+    started_ns: int
+    ended_ns: int | None = None
+    status: str = "running"
+    attributes: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class Event:
     """A raw recorder event (enter/exit of a node call).
 
@@ -96,6 +110,8 @@ class Trace:
         self.nodes: OrderedDict[str, Node] = OrderedDict()
         self.edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
         self.events: list[Event] = []
+        self.spans: OrderedDict[str, Span] = OrderedDict()
+        self.otel_trace_id: str | None = None
         # event sinks (e.g. SidecarBackend) notified after each resolved event.
         # Typed loosely to keep this module free of tracing-layer imports.
         self.sinks: list = []
@@ -114,6 +130,19 @@ class Trace:
         self.graph_version: int = 0
         self.exec_version: int = 0
         self._cond = threading.Condition()
+
+    def record_span(self, span: Span) -> None:
+        """Store an ended OTel span for this trace's expandable call tree."""
+        with self._cond:
+            is_new_shape = not any(
+                existing.name == span.name and existing.parent_span_id == span.parent_span_id
+                for existing in self.spans.values()
+            )
+            self.spans[span.span_id] = span
+            if is_new_shape:
+                self._bump_graph()
+            else:
+                self._bump_exec()
 
     def _bump_graph(self) -> None:
         """Notify topology change (new node/edge). Caller holds ``_cond``."""
@@ -284,6 +313,19 @@ class Trace:
                 # same events incrementally via SSE.
                 "total_ms": sum(n.last_ms or 0 for n in self.nodes.values()),
                 "handoffs": sum(e.count for e in self.edges.values()),
+                "spans": [
+                    {
+                        "trace_id": span.trace_id,
+                        "span_id": span.span_id,
+                        "parent_span_id": span.parent_span_id,
+                        "name": span.name,
+                        "started_ns": span.started_ns,
+                        "ended_ns": span.ended_ns,
+                        "status": span.status,
+                        "attributes": span.attributes,
+                    }
+                    for span in self.spans.values()
+                ],
                 "events": [
                     {
                         "ts": ev.ts,
@@ -298,4 +340,4 @@ class Trace:
             }
 
 
-__all__ = ["Level", "Node", "Edge", "Event", "Trace"]
+__all__ = ["Level", "Node", "Edge", "Span", "Event", "Trace"]

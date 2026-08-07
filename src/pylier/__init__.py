@@ -50,6 +50,7 @@ __all__ = [
     "level",
     "set_level",
     "build_html",
+    "configure_otel",
     "Level",
     "Trace",
     "Node",
@@ -118,8 +119,11 @@ def trace(name: str = "trace", *, sidecar: bool | str | Path = False):
         _attach_sidecar(t, sidecar)
     mark_last_trace(t)
     token = use_trace(t)
+    from pylier.tracing.otel import trace_span
+
     try:
-        yield t
+        with trace_span(name, t):
+            yield t
     finally:
         reset_trace(token)
 
@@ -137,6 +141,17 @@ def render(path: str | Path = "pylier.html", trace: Trace | None = None) -> Path
     if trace is None:
         trace = resolve_trace()
     return render_to_file(trace, path)
+
+
+def configure_otel() -> None:
+    """Attach pylier to the active OpenTelemetry SDK provider.
+
+    Pylier captures standard OTel spans created inside a :func:`trace` block
+    and emits decorated node calls as normal OTel spans.
+    """
+    from pylier.tracing.otel import configure_otel as _configure_otel
+
+    _configure_otel()
 
 
 def set_level(level: Level | str):

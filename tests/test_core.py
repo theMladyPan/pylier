@@ -14,6 +14,38 @@ import pylier
 from pylier.model import Level, Node, Trace
 
 
+def test_decorated_nodes_emit_nested_otel_spans_without_logfire():
+    @pylier.node
+    def child(value: str) -> str:
+        return value.upper()
+
+    @pylier.node
+    def parent(value: str) -> str:
+        return child(value)
+
+    with pylier.trace("otel") as traced:
+        assert parent("ok") == "OK"
+
+    spans = {span.name.rsplit(".", 1)[-1]: span for span in traced.spans.values()}
+    assert traced.otel_trace_id is not None
+    assert spans["parent"].trace_id == traced.otel_trace_id
+    assert spans["child"].parent_span_id == spans["parent"].span_id
+
+
+def test_standard_otel_spans_are_captured_in_the_active_pylier_trace():
+    from opentelemetry import trace as otel_trace
+
+    with (
+        pylier.trace("external-otel") as traced,
+        otel_trace.get_tracer("example").start_as_current_span("GET /ocr"),
+    ):
+        pass
+
+    external_span = next(span for span in traced.spans.values() if span.name == "GET /ocr")
+    assert external_span.trace_id == traced.otel_trace_id
+    assert external_span.parent_span_id is not None
+
+
 def test_sync_edge_inferred_from_returned_value():
     @pylier.node
     def producer():
