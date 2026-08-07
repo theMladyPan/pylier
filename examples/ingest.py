@@ -70,28 +70,25 @@ def run_pipeline(name: str) -> int:
 def main(mode: str) -> None:
     global _STEP_DELAY
     if mode == "serve":
-        # Live mode: open ONE trace and keep it open so the viewer (which
-        # resolves the active trace at serve time) watches the same object.
-        # Each node call bumps the trace version and the SSE endpoint pushes
-        # the change, so the graph grows node-by-node in the browser. Slow
-        # each stage so the streaming is visible. Iterating re-enters nodes,
-        # so call-counts accumulate and the badge counts climb live.
+        # Every document is its own root OTel trace and therefore its own live
+        # viewer tab. Nested decorated calls remain detail inside that tab.
         _STEP_DELAY = 1.5
-        with pylier.trace("doc-ingest") as tr:  # noqa: F841 (tr held for the viewer)
-            server = pylier.serve()  # picks up the active trace via _last_trace
-            print("viewer streaming — processing documents one at a time...")
-            try:
-                for i in range(1, 10):
+        pylier.configure_otel()
+        server = pylier.serve(open_browser=True)
+        print("viewer streaming — each document opens a separate trace tab...")
+        try:
+            for i in range(1, 10):
+                with pylier.trace(f"doc-ingest-{i}"):
                     doc = load_document("report.pdf")
                     vectors = process_document(doc)
                     total = index(vectors)
-                    print(f"doc {i}: indexed {total} vectors")
-                    time.sleep(2.0)
-                input("press enter to stop...")
-            except EOFError:
-                pass
-            finally:
-                server.shutdown()
+                print(f"doc {i}: indexed {total} vectors")
+                time.sleep(2.0)
+            input("press enter to stop...")
+        except EOFError:
+            pass
+        finally:
+            server.shutdown()
     elif mode == "html":
         # One-shot: no delays, single run, write a self-contained HTML file.
         _STEP_DELAY = 0.0

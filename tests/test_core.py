@@ -580,15 +580,17 @@ def test_sse_latency_update_does_not_emit_empty_exec_batches():
         connection.request("GET", "/events")
         response = connection.getresponse()
         assert response.status == 200
+        assert response.readline() == b"event: tabs\n"
+        while response.readline() != b"\n":
+            pass
         assert response.readline() == b"event: graph\n"
         while response.readline() != b"\n":
             pass
 
         trace.record_latency("latency", 1.5)
-        # A latency-only update can send one keepalive, but must not begin an
-        # unbounded stream of empty ``event: exec`` frames.
-        assert response.readline() == b": heartbeat\n"
-        assert response.readline() == b"\n"
+        # A latency-only update must not begin an unbounded stream of empty
+        # ``event: exec`` frames. The registry-backed viewer stays quiet until
+        # a real event or heartbeat is available.
         with pytest.raises((TimeoutError, socket.timeout)):
             response.readline()
     finally:

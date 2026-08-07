@@ -23,11 +23,39 @@ from typing import Any
 from pylier.model import Trace
 from pylier.render import build_html
 
-__all__ = ["serve"]
+__all__ = ["serve", "register_trace"]
 
 # SSE heartbeat cadence: if nothing changed for this long, send a comment line
 # to keep the HTTP connection alive through proxies/timeouts.
 _SSE_HEARTBEAT = 15.0
+
+_registry_lock = threading.Condition()
+_registry: list[Trace] = []
+_registry_version = 0
+
+
+def register_trace(trace: Trace) -> None:
+    """Make an independent root trace available as a live viewer tab."""
+    global _registry_version
+    with _registry_lock:
+        if trace not in _registry:
+            _registry.append(trace)
+            _registry_version += 1
+            _registry_lock.notify_all()
+
+
+def _reset_registry(trace: Trace) -> None:
+    """Start a viewer session without stale traces from an earlier server."""
+    global _registry_version
+    with _registry_lock:
+        _registry[:] = [trace]
+        _registry_version += 1
+        _registry_lock.notify_all()
+
+
+def _trace_tabs() -> list[dict[str, str]]:
+    with _registry_lock:
+        return [{"id": trace.otel_trace_id or f"local-{id(trace)}", "name": trace.name} for trace in _registry]
 
 
 def serve(trace: Trace | None = None, port: int = 8765, *, open_browser: bool = True) -> ThreadingHTTPServer:
@@ -46,6 +74,7 @@ def serve(trace: Trace | None = None, port: int = 8765, *, open_browser: bool = 
 
         trace = resolve_trace()
 
+    _reset_registry(trace)
     server = _make_server(trace, port)
 
     thread = threading.Thread(target=server.serve_forever, daemon=True, name="pylier-viewer")
@@ -80,7 +109,9 @@ def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
 
         def do_GET(self) -> None:  # noqa: N802 - http.server API
             if self.path in ("/", "/index.html"):
-                self._send(build_html(captured_trace).encode("utf-8"), "text/html; charset=utf-8")
+                graph = captured_trace.to_graph_dict()
+                graph["tabs"] = _trace_tabs()
+                self._send(build_html(captured_trace, graph=graph).encode("utf-8"), "text/html; charset=utf-8")
             elif self.path == "/graph":
                 # kept for debugging / non-SSE clients; the page itself uses /events
                 self._send(
@@ -106,26 +137,42 @@ def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            graph_since = -1  # forces an immediate full-graph send on connect
-            exec_version_since = 0
-            event_index_since = 0
+            graph_versions: dict[int, int] = {}
+            exec_versions: dict[int, int] = {}
+            event_indices: dict[int, int] = {}
+            registry_since = -1
             try:
                 while True:
-                    graph_v, exec_v = captured_trace.wait_for_change(
-                        graph_since, exec_version_since, timeout=_SSE_HEARTBEAT
-                    )
+                    with _registry_lock:
+                        traces = list(_registry)
+                        registry_v = _registry_version
                     wrote = False
-                    if graph_v > graph_since:
-                        payload = json.dumps(captured_trace.to_graph_dict(), default=str)
-                        self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
-                        graph_since = graph_v
+                    if registry_v > registry_since:
+                        self.wfile.write(f"event: tabs\ndata: {json.dumps(_trace_tabs())}\n\n".encode())
+                        registry_since = registry_v
                         wrote = True
-                    if exec_v > exec_version_since:
-                        event_index_since, new_events = captured_trace.events_since(event_index_since)
+                    for streamed_trace in traces:
+                        key = id(streamed_trace)
+                        graph_since = graph_versions.get(key, -1)
+                        exec_version_since = exec_versions.get(key, 0)
+                        graph_v, exec_v = streamed_trace.wait_for_change(graph_since, exec_version_since, timeout=0)
+                        trace_id = streamed_trace.otel_trace_id or f"local-{key}"
+                        if graph_v > graph_since:
+                            payload = json.dumps(
+                                {"trace_id": trace_id, "graph": streamed_trace.to_graph_dict()}, default=str
+                            )
+                            self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
+                            graph_versions[key] = graph_v
+                            wrote = True
+                        if exec_v <= exec_version_since:
+                            continue
+                        event_index_since = event_indices.get(key, 0)
+                        event_index_since, new_events = streamed_trace.events_since(event_index_since)
                         # Latency updates advance the execution version without adding a
                         # timeline event. Advance its cursor either way; otherwise the
                         # server would spin forever emitting empty ``exec`` batches.
-                        exec_version_since = exec_v
+                        exec_versions[key] = exec_v
+                        event_indices[key] = event_index_since
                         if new_events:
                             batch = json.dumps(
                                 [
@@ -139,12 +186,15 @@ def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
                                 ],
                                 default=str,
                             )
-                            self.wfile.write(f"event: exec\ndata: {batch}\n\n".encode())
+                            event_payload = json.dumps({"trace_id": trace_id, "events": json.loads(batch)})
+                            self.wfile.write(f"event: exec\ndata: {event_payload}\n\n".encode())
                             wrote = True
                     if wrote:
                         self.wfile.flush()
                     else:
-                        # nothing changed within the heartbeat window: keep alive
+                        # wait for either trace work or a newly registered tab
+                        with _registry_lock:
+                            _registry_lock.wait(timeout=_SSE_HEARTBEAT)
                         self.wfile.write(b": heartbeat\n\n")
                         self.wfile.flush()
             except BrokenPipeError, ConnectionResetError:

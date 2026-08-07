@@ -192,6 +192,9 @@
   .type-key .other { background: var(--type-other); }
 
   /* node cards: monochrome, dynamic width, status stripe */
+  #trace-tabs { display:flex; gap:4px; max-width:42vw; overflow:auto; }
+  .trace-tab { border:1px solid var(--panel-border); background:transparent; color:var(--muted); padding:4px 7px; font:10px var(--mono); cursor:pointer; white-space:nowrap; }
+  .trace-tab.active { border-color:var(--accent); color:var(--ink); background:color-mix(in srgb, var(--accent) 14%, transparent); }
   .node { cursor: grab; }
   .node:active { cursor: grabbing; }
   .node rect.body { fill: var(--card); stroke: var(--node-stroke); stroke-width: 1; }
@@ -232,6 +235,7 @@
   <h1>pylier</h1>
   <span class="slash">/</span>
   <span class="crumb"><b id="h-name">{{NAME}}</b></span>
+  <div id="trace-tabs" aria-label="Trace tabs"></div>
   <span class="stamp" id="h-stamp">live</span>
   <span class="spacer"></span>
   <span class="dur" id="h-dur"></span>
@@ -449,18 +453,44 @@ function logSseEvent(kind, payload) {
 }
 
 let liveData = null;
+const traceGraphs = new Map();
+let selectedTraceId = null;
+function renderTraceTabs(tabs) {
+  const host = d3.select("#trace-tabs");
+  host.selectAll("button.trace-tab").data(tabs || [], tab => tab.id).join(
+    enter => enter.append("button").attr("class", "trace-tab"),
+    update => update,
+    exit => exit.remove(),
+  ).text(tab => tab.name).classed("active", tab => tab.id === selectedTraceId)
+    .on("click", (_event, tab) => { selectedTraceId = tab.id; liveData = traceGraphs.get(tab.id) || liveData; renderTraceTabs(tabs); update(); });
+}
+const initialTabs = RAW?.tabs || [];
+if (initialTabs.length) {
+  selectedTraceId = initialTabs[0].id;
+  traceGraphs.set(selectedTraceId, RAW);
+  renderTraceTabs(initialTabs);
+}
 if (LIVE) {
   const es = new EventSource("/events");
+  es.addEventListener("tabs", (e) => {
+    const tabs = JSON.parse(e.data);
+    if (!selectedTraceId && tabs.length) selectedTraceId = tabs[0].id;
+    renderTraceTabs(tabs);
+  });
   es.addEventListener("graph", (e) => {
-    const graph = JSON.parse(e.data);
+    const payload = JSON.parse(e.data);
+    const graph = payload.graph || payload;
+    const traceId = payload.trace_id || selectedTraceId;
+    traceGraphs.set(traceId, graph);
+    if (!selectedTraceId) selectedTraceId = traceId;
     logSseEvent("graph", graph);
-    liveData = graph;
-    update();
+    if (traceId === selectedTraceId) { liveData = graph; update(); }
   });
   es.addEventListener("exec", (e) => {
-    const events = JSON.parse(e.data);
+    const payload = JSON.parse(e.data);
+    const events = payload.events || payload;
     logSseEvent("exec", events);
-    playEvents(events);
+    if (!payload.trace_id || payload.trace_id === selectedTraceId) playEvents(events);
   });
   es.onerror = () => { es.close(); };
 }

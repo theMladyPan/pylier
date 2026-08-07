@@ -90,6 +90,9 @@ def trace_span(name: str, pylier_trace: Trace) -> Iterator[None]:
         pylier_trace.otel_trace_id = trace_id
         with _lock:
             _traces[trace_id] = pylier_trace
+        from pylier.server import register_trace
+
+        register_trace(pylier_trace)
         yield
 
 
