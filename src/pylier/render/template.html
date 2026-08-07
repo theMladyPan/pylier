@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>pylier — {{NAME}}</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<style>
+  :root {
+    /* GitHub dark (default) — primer github-vscode-theme tokens */
+    --bg: #0d1117;
+    --panel-bg: #0d1117;
+    --panel-2: #161b22;
+    --panel-border: #30363d;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --accent: #2f81f7;
+    --card: #161b22;
+    --ink: #e6edf3;
+    --node-stroke: #30363d;
+    --dot: #21262d;
+    --edge-data: #7d8590;
+    --edge-control: #a371f7;
+    --edge-telemetry: #d29922;
+    --edge-code: #2f81f7;
+    --fire: #2f81f7;
+  }
+  [data-theme="light"] {
+    /* GitHub light */
+    --bg: #f6f8fa;
+    --panel-bg: #ffffff;
+    --panel-2: #ffffff;
+    --panel-border: #d0d7de;
+    --text: #1f2328;
+    --muted: #656d76;
+    --accent: #0969da;
+    --card: #ffffff;
+    --ink: #1f2328;
+    --node-stroke: #d0d7de;
+    --dot: #d0d7de;
+    --edge-data: #57606a;
+    --edge-control: #8250df;
+    --edge-telemetry: #9a6700;
+    --edge-code: #0969da;
+    --fire: #0969da;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  #header { padding: 8px 14px; border-bottom: 1px solid var(--panel-border); display:flex; gap:14px; align-items:center; }
+  #header h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing:-.02em; }
+  #header .meta { color: var(--muted); font-size: 12px; }
+  #header .spacer { flex: 1; }
+  #header .theme-btn { background: var(--panel-2); color: var(--text); border:1px solid var(--panel-border); border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px; }
+  #header .theme-btn:hover { border-color: var(--accent); }
+  #main { flex: 1; display: flex; min-height: 0; }
+  #graph { flex: 1; background: var(--bg); background-image: radial-gradient(var(--dot) .7px, transparent .7px); background-size: 18px 18px; }
+  #sidebar { width: 320px; border-left: 1px solid var(--panel-border); background: var(--panel-bg); overflow:auto; padding: 12px; }
+  #sidebar h2 { font-size: 11px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing:.1em; }
+  .panel { border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; margin-bottom: 12px; background: var(--panel-2); }
+  .panel label { display:block; font-size: 13px; margin: 6px 0; cursor:pointer; }
+  .panel button { background: var(--panel-2); color: var(--text); border:1px solid var(--panel-border); border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  .panel button:hover { border-color: var(--accent); }
+  #details .row { margin: 4px 0; font-size: 13px; }
+  #details .row .k { color: var(--muted); }
+  #details .edges { margin-top: 6px; }
+  #details .edge-line { font-size: 12px; color: var(--text); margin: 2px 0; }
+  #details .edge-line .arr { color: var(--accent); }
+  #details .empty { color: var(--muted); font-style: italic; font-size: 13px; }
+  svg { width: 100%; height: 100%; display:block; }
+  .node rect.body { fill: var(--card); stroke: var(--node-stroke); stroke-width: 1; }
+  .node:hover rect.body { stroke: var(--accent); stroke-width: 1.5; }
+  .node text { font-size: 12px; pointer-events: none; }
+  .node .name { fill: var(--ink); font-weight: 650; }
+  .node .badge { font-size: 10px; fill: var(--muted); }
+  .link { fill: none; opacity: .8; }
+  .link.highlighted { opacity: 1; stroke-width: 3px; }
+  .link.dimmed { opacity: .12; }
+  .link.firing { opacity: 1; stroke-width: 4px; filter: drop-shadow(0 0 6px var(--fire)); }
+  .node.dimmed { opacity: .15; }
+  .node.pulsing rect.body { animation: node-pulse 0.7s ease-in-out infinite; stroke: var(--accent); }
+  @keyframes node-pulse {
+    0%, 100% { stroke-width: 1.5px; filter: drop-shadow(0 0 2px var(--accent)); }
+    50% { stroke-width: 3px; filter: drop-shadow(0 0 10px var(--accent)); }
+  }
+  .edge-label { font-size: 10px; fill: var(--muted); pointer-events:none; paint-order: stroke; stroke: var(--bg); stroke-width: 5px; }
+  #details pre.value { background: var(--bg); border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px; font-size: 11px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  .legend-swatch { display:inline-block; width:18px; height:0; vertical-align: middle; margin-right:8px; border-top: 2px solid; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>pylier</h1>
+  <span class="meta" id="graph-meta"></span>
+  <span class="spacer"></span>
+  <button class="theme-btn" id="b-theme">☀ light</button>
+</div>
+<div id="main">
+  <svg id="graph"></svg>
+  <div id="sidebar">
+    <div class="panel" id="controls">
+      <h2>Controls</h2>
+      <label><input type="checkbox" id="c-telemetry" checked /> Show telemetry edges</label>
+      <label><input type="checkbox" id="c-code" checked /> Show code-dep edges</label>
+      <label><input type="checkbox" id="c-labels" /> Show edge labels</label>
+      <label><input type="checkbox" id="c-anim" checked /> Animate data flow</label>
+      <button id="b-fit">Fit view</button>
+      <button id="b-reset">Reset selection</button>
+    </div>
+    <div class="panel" id="legend">
+      <h2>Legend</h2>
+      <div><span class="legend-swatch" style="border-top-color:var(--edge-data)"></span>data</div>
+      <div><span class="legend-swatch" style="border-top-color:var(--edge-control);border-top-style:dashed"></span>trigger / job</div>
+      <div><span class="legend-swatch" style="border-top-color:var(--edge-telemetry);border-top-style:dotted"></span>telemetry</div>
+      <div><span class="legend-swatch" style="border-top-color:var(--edge-code);border-top-style:dashdot"></span>code dep</div>
+    </div>
+    <div class="panel" id="details">
+      <h2>Details</h2>
+      <div class="empty">Click a node to inspect.</div>
+    </div>
+  </div>
+</div>
+
+<script id="embedded-data" type="application/json">__PYLIER_GRAPH_JSON__</script>
+<script>
+const RAW = __PYLIER_GRAPH__;
+// payload_kind -> stroke style (from PoC)
+const STROKE = {
+  data: "solid",
+  trigger: "dashed",
+  job: "dashed",
+  telemetry: "dotted",
+  code: "dashdot",
+  unknown: "solid",
+};
+const STROKE_DASH = {
+  solid: "none",
+  dashed: "8 4",
+  dotted: "2 4",
+  dashdot: "8 4 2 4",
+};
+// edge color by payload kind (resolves CSS vars so theme toggle recolors live)
+const KIND_COLOR = {
+  data: "var(--edge-data)",
+  trigger: "var(--edge-control)",
+  job: "var(--edge-control)",
+  telemetry: "var(--edge-telemetry)",
+  code: "var(--edge-code)",
+  unknown: "var(--edge-data)",
+};
+function kindColorOf(d) { return KIND_COLOR[d._kind] || KIND_COLOR.unknown; }
+
+// node card geometry: width grows with the label, height is fixed.
+// Hoisted so both the collide force and the edge router share it.
+const NH = 40; // node half-height*2
+function nodeW(d) { return Math.max(120, (d.name || "").length * 7); }
+
+// resolve payload_kind from an edge: prefer explicit tags, else map type heuristics
+function payloadKind(edge) {
+  if (edge.tags && edge.tags.payload_kind) return edge.tags.payload_kind;
+  const p = (edge.payload || "").toLowerCase();
+  if (/trigger|event|signal/.test(p)) return "trigger";
+  if (/job|task/.test(p)) return "job";
+  if (/metric|log|telemetry|span/.test(p)) return "telemetry";
+  return "data";
+}
+
+function loadData() {
+  if (liveData && liveData.nodes) return liveData;
+  if (RAW && RAW.nodes && RAW.nodes.length) return RAW;
+  const el = document.getElementById("embedded-data");
+  const txt = el.textContent.trim();
+  if (txt.startsWith("{")) return JSON.parse(txt);
+  return { nodes: [], links: [], categories: [], dataTypes: [] };
+}
+
+// Live mode: if a /graph endpoint is reachable (live viewer server), subscribe
+// to Server-Sent Events and re-render only when the trace actually changes —
+// no fixed-interval polling, so a stable pipeline produces zero redundant
+// renders and a growing one updates without cold-restarting the layout.
+// Static files have no such endpoint and fall back to the embedded data above.
+const LIVE = location.protocol.startsWith("http") && !location.href.startsWith("file:");
+let liveData = null;
+if (LIVE) {
+  const es = new EventSource("/events");
+  es.addEventListener("graph", (e) => { liveData = JSON.parse(e.data); update(); });
+  // exec events carry the real execution timing: enter -> pulse the node and
+  // fire its inbound edges (data handoffs); exit -> stop the pulse
+  es.addEventListener("exec", (e) => { playEvents(JSON.parse(e.data)); });
+  es.onerror = () => { es.close(); }; // best effort; page keeps the last snapshot
+}
+
+let state = { showTelemetry: true, showCode: true, showLabels: false, animate: true, selected: null };
+
+// ---------------------------------------------------------------------------
+// Persistent graph: SVG, zoom, layers and the force simulation are created
+// ONCE and kept alive for the page lifetime. ``update()`` joins new data into
+// the existing simulation instead of tearing it down, so live polling no longer
+// cold-restarts the layout (the source of the 1.5s tearing).
+// ---------------------------------------------------------------------------
+const svg = d3.select("#graph");
+let w = svg.node().clientWidth, h = svg.node().clientHeight;
+svg.attr("viewBox", `0 0 ${w} ${h}`);
+
+const root = svg.append("g");
+const zoom = d3.zoom().scaleExtent([0.2, 4]).on("zoom", (e) => root.attr("transform", e.transform));
+svg.call(zoom);
+
+// one-time arrow marker — context-stroke makes the arrowhead adopt each
+// edge's color (and follow the theme); userSpaceOnUse keeps its size constant
+// even while a firing edge thickens.
+svg.append("defs").selectAll("marker")
+  .data(["arrow"]).enter().append("marker")
+  .attr("id", "arrow").attr("viewBox", "0 -4 8 8").attr("refX", 7).attr("refY", 0)
+  .attr("markerWidth", 7).attr("markerHeight", 7).attr("orient", "auto")
+  .attr("markerUnits", "userSpaceOnUse")
+  .append("path").attr("d", "M0,-4L8,0L0,4Z").attr("fill", "context-stroke");
+
+const linksG = root.append("g").attr("class", "links");
+const labelsG = root.append("g").attr("class", "labels");
+const nodesG = root.append("g").attr("class", "nodes");
+
+const sim = d3.forceSimulation()
+  .force("link", d3.forceLink().id(d => d.id).distance(260).strength(0.4))
+  .force("charge", d3.forceManyBody().strength(-1100))
+  .force("center", d3.forceCenter(w / 2, h / 2))
+  .force("collide", d3.forceCollide().radius(d => nodeW(d) / 2 + 24))
+  .alphaDecay(0.025); // settle a bit slower for smoother live additions
+
+// live state (mutated by update(); read by the persistent tick handler)
+let nodeData = [];
+let linkData = [];
+let nodeSel = null, linkSel = null, labelSel = null;
+
+function neighbors(id) {
+  const set = new Set([id]);
+  linkData.forEach(l => {
+    const s = l.source.id || l.source, t = l.target.id || l.target;
+    if (s === id) set.add(t);
+    if (t === id) set.add(s);
+  });
+  return set;
+}
+
+// spawn new nodes near an already-placed neighbor instead of at the center,
+// so live additions don't collapse the whole layout
+function spawnPosition(nodeId, prevById, data) {
+  for (const l of data.links) {
+    const other = l.source === nodeId ? l.target : l.target === nodeId ? l.source : null;
+    if (other && prevById.has(other)) {
+      const p = prevById.get(other);
+      return { x: p.x + (Math.random() - 0.5) * 40, y: p.y + (Math.random() - 0.5) * 40 };
+    }
+  }
+  return { x: w / 2 + (Math.random() - 0.5) * 80, y: h / 2 + (Math.random() - 0.5) * 80 };
+}
+
+function update() {
+  const data = loadData();
+  document.getElementById("graph-meta").textContent =
+    `${data.nodes.length} nodes · ${data.links.length} edges · ${data.name || ""}`;
+
+  // --- nodes: keep positions for persistent ids, spawn fresh ones near a neighbor ---
+  const prevById = new Map(nodeData.map(n => [n.id, n]));
+  const prevNodeIds = new Set(prevById.keys());
+
+  const fresh = data.nodes.map(d => {
+    const prev = prevById.get(d.id);
+    if (prev) return Object.assign(prev, d); // keep x,y,vx,vy
+    const sp = spawnPosition(d.id, prevById, data);
+    return Object.assign({}, d, { x: sp.x, y: sp.y });
+  });
+  const nodeById = new Map(fresh.map(n => [n.id, n]));
+
+  // --- links: filter by visibility + validity, tag each with a stable index
+  // so the rectilinear router can fan parallel edges apart. ---
+  const links = data.links
+    .map((l, i) => ({ ...l, _kind: payloadKind(l), _idx: i }))
+    .filter(l => {
+      if (l._kind === "telemetry" && !state.showTelemetry) return false;
+      if (l._kind === "code" && !state.showCode) return false;
+      return nodeById.has(l.source) && nodeById.has(l.target);
+    });
+
+  // --- detect topology change so we only reheat when the graph actually moved ---
+  const newNodeIds = new Set(fresh.map(n => n.id));
+  const addedNodes = [...newNodeIds].filter(id => !prevNodeIds.has(id)).length;
+  const removedNodes = [...prevNodeIds].filter(id => !newNodeIds.has(id)).length;
+  const linkKey = l => `${l.source}|${l.target}|${l._kind}`;
+  const prevLinkKeys = new Set(linkData.map(linkKey));
+  const newLinkKeys = new Set(links.map(linkKey));
+  const addedLinks = [...newLinkKeys].filter(k => !prevLinkKeys.has(k)).length;
+  const removedLinks = [...prevLinkKeys].filter(k => !newLinkKeys.has(k)).length;
+  const topologyChanged = addedNodes || removedNodes || addedLinks || removedLinks;
+
+  nodeData = fresh;
+  linkData = links;
+
+  // --- node join (enter/update/exit) keyed by id ---
+  const nodeJoin = nodesG.selectAll("g.node").data(fresh, d => d.id);
+  nodeJoin.exit().remove();
+  const nodeEnter = nodeJoin.enter().append("g")
+    .attr("class", "node")
+    .call(d3.drag()
+      .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+  nodeEnter.append("rect").attr("class", "body").attr("rx", 6).attr("ry", 6).attr("height", NH).attr("y", -NH / 2);
+  nodeEnter.append("text").attr("class", "name").attr("y", -2);
+  nodeEnter.append("text").attr("class", "badge").attr("y", 12);
+  nodeEnter.on("click", (e, d) => { state.selected = d.id; highlight(d); renderDetails(d); });
+
+  nodeSel = nodeJoin.merge(nodeEnter);
+  nodeSel.select("rect.body")
+    .attr("width", nodeW)
+    .attr("x", d => -nodeW(d) / 2);
+  nodeSel.select("text.name")
+    .text(d => d.name)
+    .attr("x", d => -nodeW(d) / 2 + 10);
+  nodeSel.select("text.badge")
+    .text(d => `${d.category} · ${d.calls || 0}×`)
+    .attr("x", d => -nodeW(d) / 2 + 10);
+
+  // --- link join keyed by source|target|kind (model dedupes edges per pair) ---
+  const linkJoin = linksG.selectAll("path.link").data(links, linkKey);
+  linkJoin.exit().remove();
+  linkSel = linkJoin.enter().append("path")
+    .attr("class", "link")
+    .attr("marker-end", "url(#arrow)")
+    .merge(linkJoin)
+    .style("stroke", kindColorOf)
+    .attr("stroke-width", d => 1.5 + Math.min(3, (d.count || 1) * 0.4))
+    .style("stroke-dasharray", d => STROKE_DASH[STROKE[d._kind]])
+    .style("cursor", "pointer");
+  // click an edge to inspect the data that flows across it
+  linkSel.on("click", (e, d) => { e.stopPropagation(); renderEdgeDetails(d); });
+
+  // --- edge labels ---
+  const labelJoin = labelsG.selectAll("text.edge-label").data(links, linkKey);
+  labelJoin.exit().remove();
+  labelSel = labelJoin.enter().append("text")
+    .attr("class", "edge-label")
+    .text(d => d.payload || "")
+    .style("display", state.showLabels ? null : "none")
+    .merge(labelJoin);
+
+  // --- feed the persistent simulation the new node/link arrays ---
+  sim.nodes(fresh);
+  sim.force("link").links(links);
+
+  // reheat gently only when the graph actually changed; otherwise leave it settled
+  if (topologyChanged) sim.alpha(Math.min(1, sim.alpha() + 0.3)).restart();
+
+  // re-apply selection highlight if a node is still present
+  if (state.selected && nodeById.has(state.selected)) highlight(nodeById.get(state.selected));
+  else { state.selected = null; clearHighlight(); }
+}
+
+// persistent tick handler — reads the live selections set by update()
+sim.on("tick", () => {
+  if (linkSel) linkSel.attr("d", d => linkRoute(d).path);
+  if (nodeSel) nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+  if (labelSel) labelSel
+    .attr("x", d => linkRoute(d).x)
+    .attr("y", d => linkRoute(d).y - 7);
+});
+
+// Rectilinear (orthogonal) edge routing with rounded corners. Both endpoints
+// are clipped to the node card border (+ a small arrow pad on the target) so
+// the arrowhead — oriented via marker orient="auto" along the final, axis-
+// aligned segment — sits tangent to the border. Parallel edges between the
+// same pair fan apart using the stable per-edge _idx for an elbow offset.
+function linkRoute(d) {
+  const s = d.source, t = d.target;
+  const sw = nodeW(s) / 2, tw = nodeW(t) / 2, hh = NH / 2;
+  const dx = t.x - s.x, dy = t.y - s.y;
+  const sp = 2, ap = 8; // start pad, arrow pad
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const sh = Math.sign(dx) || 1, sv = Math.sign(dy) || 0;
+    const ex = s.x + sh * (sw + sp), ey = s.y, tx2 = t.x - sh * (tw + ap), ty = t.y;
+    const lo = Math.min(ex, tx2), hi = Math.max(ex, tx2), r = Math.min(14, Math.abs(ty - ey) / 2);
+    let mx = (ex + tx2) / 2 + ((d._idx % 3) - 1) * 22;
+    mx = (hi - lo > 2 * r) ? Math.max(lo + r, Math.min(hi - r, mx)) : (lo + hi) / 2;
+    if (Math.abs(dy) < 8) return { path: `M${ex},${ey}H${tx2}`, x: (ex + tx2) / 2, y: ey };
+    return { path: `M${ex},${ey}H${mx - sh * r}Q${mx},${ey} ${mx},${ey + sv * r}V${ty - sv * r}Q${mx},${ty} ${mx + sh * r},${ty}H${tx2}`, x: mx, y: (ey + ty) / 2 };
+  }
+  const sv = Math.sign(dy) || 1, sh = Math.sign(dx) || 0;
+  const ex = s.x, ey = s.y + sv * (hh + sp), tx2 = t.x, ty = t.y - sv * (hh + ap);
+  const lo = Math.min(ey, ty), hi = Math.max(ey, ty), r = Math.min(14, Math.abs(tx2 - ex) / 2);
+  let my = (ey + ty) / 2 + ((d._idx % 3) - 1) * 22;
+  my = (hi - lo > 2 * r) ? Math.max(lo + r, Math.min(hi - r, my)) : (lo + hi) / 2;
+  if (Math.abs(dx) < 8) return { path: `M${ex},${ey}V${ty}`, x: ex, y: (ey + ty) / 2 };
+  return { path: `M${ex},${ey}V${my - sv * r}Q${ex},${my} ${ex + sh * r},${my}H${tx2 - sh * r}Q${tx2},${my} ${tx2},${my + sv * r}V${ty}`, x: (ex + tx2) / 2, y: my };
+}
+// linkPath kept as a thin string accessor for external callers (highlight etc.)
+function linkPath(d) { return linkRoute(d).path; }
+
+// --- execution animation: node pulse (enter->exit) and edge fire (handoff) ---
+// Events arrive live via SSE or are replayed once from the embedded timeline
+// in static HTML. The edge "fire" is a quick decaying glow; the node pulses
+// from when it receives data until it emits its result.
+function nodeByIdNow(id) { return nodeData.find(n => n.id === id) || null; }
+
+function bumpCalls(id) {
+  const n = nodeByIdNow(id);
+  if (!n) return;
+  n.calls = (n.calls || 0) + 1;
+  if (nodeSel) nodeSel.filter(d => d.id === id).select("text.badge")
+    .text(d => `${d.category} · ${d.calls || 0}×`);
+}
+
+function fireEdge(source, target) {
+  if (!linkSel) return;
+  const s = linkSel.filter(l => (l.source.id || l.source) === source && (l.target.id || l.target) === target);
+  s.classed("firing", true)
+    .style("stroke", "var(--fire)")
+    .style("stroke-dasharray", null)
+    .transition().duration(650).ease(d3.easeCubicOut)
+    .on("end", function () {
+      const l = d3.select(this).datum();
+      d3.select(this)
+        .classed("firing", false)
+        .style("stroke", l ? kindColorOf(l) : "var(--edge-data)")
+        .style("stroke-dasharray", l ? STROKE_DASH[STROKE[l._kind]] : null);
+    });
+}
+
+function pulseStart(id) {
+  if (nodeSel) nodeSel.filter(d => d.id === id).classed("pulsing", true);
+}
+function pulseStop(id) {
+  if (nodeSel) nodeSel.filter(d => d.id === id).classed("pulsing", false);
+}
+
+// process a batch of exec events (live) — events arrive in ts order already
+function playEvents(events) {
+  if (!state.animate) return;
+  for (const ev of events) applyEvent(ev);
+}
+function applyEvent(ev) {
+  if (ev.kind === "enter") {
+    pulseStart(ev.node_id);
+    bumpCalls(ev.node_id);
+    for (const e of ev.edges || []) fireEdge(e.source, e.target);
+  } else if (ev.kind === "exit") {
+    pulseStop(ev.node_id);
+  }
+}
+
+// static HTML: replay the embedded timeline once, at capped real-time gaps so
+// a 3s pipeline replays in ~seconds, not the original wall-clock time
+function replayTimeline(events) {
+  if (!state.animate || !events || !events.length) return;
+  let t = 200; // small lead-in
+  let prev = events[0].ts;
+  for (const ev of events) {
+    const gap = Math.min(Math.max((ev.ts - prev) * 1000, 80), 900); // 80..900ms
+    prev = ev.ts;
+    const at = t;
+    setTimeout(() => applyEvent(ev), at);
+    t += gap;
+  }
+}
+
+function highlight(d) {
+  if (!nodeSel || !linkSel) return;
+  const nb = neighbors(d.id);
+  nodeSel.classed("dimmed", n => !nb.has(n.id));
+  linkSel.classed("highlighted", l => (l.source.id || l.source) === d.id || (l.target.id || l.target) === d.id)
+         .classed("dimmed", l => (l.source.id || l.source) !== d.id && (l.target.id || l.target) !== d.id);
+}
+function clearHighlight() {
+  if (nodeSel) nodeSel.classed("dimmed", false);
+  if (linkSel) linkSel.classed("highlighted", false).classed("dimmed", false);
+}
+
+function renderDetails(d) {
+  const det = d3.select("#details");
+  det.html("");
+  det.append("h2").text("Details");
+  det.append("div").attr("class", "row").html(`<span class="k">node:</span> ${d.name}`);
+  det.append("div").attr("class", "row").html(`<span class="k">module:</span> ${d.category}`);
+  det.append("div").attr("class", "row").html(`<span class="k">calls:</span> ${d.calls || 0}`);
+  if (d.tags && Object.keys(d.tags).length) {
+    det.append("div").attr("class", "row").html(`<span class="k">tags:</span> ${JSON.stringify(d.tags)}`);
+  }
+  const inb = linkData.filter(l => (l.target.id || l.target) === d.id);
+  const outb = linkData.filter(l => (l.source.id || l.source) === d.id);
+  const box = det.append("div").attr("class", "edges");
+  box.append("div").attr("class", "row").html(`<span class="k">inbound (${inb.length})</span>`);
+  inb.forEach(l => box.append("div").attr("class", "edge-line")
+    .html(`${l.source.id || l.source} <span class="arr">→</span> ${d.id} · ${l.payload || ""}`));
+  box.append("div").attr("class", "row").html(`<span class="k">outbound (${outb.length})</span>`);
+  outb.forEach(l => box.append("div").attr("class", "edge-line")
+    .html(`${d.id} <span class="arr">→</span> ${l.target.id || l.target} · ${l.payload || ""}`));
+}
+
+// inspect the data flowing across a clicked edge. Shows metadata always; the
+// full serialized payload when capture_values was enabled, else the preview.
+function renderEdgeDetails(l) {
+  const src = l.source.id || l.source, tgt = l.target.id || l.target;
+  const srcName = nodeByIdNow(src)?.name || src, tgtName = nodeByIdNow(tgt)?.name || tgt;
+  const det = d3.select("#details");
+  det.html("");
+  det.append("h2").text("Edge");
+  det.append("div").attr("class", "row").html(`<span class="arr">${srcName} → ${tgtName}</span>`);
+  det.append("div").attr("class", "row").html(`<span class="k">payload:</span> ${l.payload || ""}`);
+  if (l.size != null) det.append("div").attr("class", "row").html(`<span class="k">size:</span> ${l.size}`);
+  det.append("div").attr("class", "row").html(`<span class="k">count:</span> ${l.count || 1}×`);
+  if (l.tags && Object.keys(l.tags).length)
+    det.append("div").attr("class", "row").html(`<span class="k">tags:</span> ${JSON.stringify(l.tags)}`);
+  if (l.value != null) {
+    det.append("div").attr("class", "row").html(`<span class="k">value:</span>`);
+    det.append("pre").attr("class", "value").text(l.value);
+  } else if (l.preview != null) {
+    det.append("div").attr("class", "row").html(`<span class="k">preview:</span>`);
+    det.append("pre").attr("class", "value").text(l.preview);
+  } else {
+    det.append("div").attr("class", "row").html('<span class="k">value:</span> <i>not captured — set PYLIER_CAPTURE_VALUES=1 or run at level "debug" for a preview</i>');
+  }
+}
+
+function fit() {
+  const bbox = root.node().getBBox();
+  if (!isFinite(bbox.width) || !bbox.width) return;
+  const scale = Math.min(2, 0.85 / Math.max(bbox.width / w, bbox.height / h));
+  const tx = (w - bbox.width * scale) / 2 - bbox.x * scale;
+  const ty = (h - bbox.height * scale) / 2 - bbox.y * scale;
+  svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+
+d3.select("#b-fit").on("click", () => setTimeout(fit, 600));
+d3.select("#b-reset").on("click", () => {
+  state.selected = null; clearHighlight();
+  d3.select("#details").html('<h2>Details</h2><div class="empty">Click a node to inspect.</div>');
+});
+d3.select("#c-telemetry").on("change", e => { state.showTelemetry = e.target.checked; update(); });
+d3.select("#c-code").on("change", e => { state.showCode = e.target.checked; update(); });
+d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
+d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
+
+// light/dark theme toggle (GitHub palettes). Applied before the first render so
+// the SVG picks up the right CSS vars; preference persists across sessions.
+function applyTheme(t) {
+  document.documentElement.setAttribute("data-theme", t);
+  d3.select("#b-theme").text(t === "dark" ? "☀ light" : "☾ dark");
+}
+const savedTheme = (() => { try { return localStorage.getItem("pylier-theme") || "dark"; } catch { return "dark"; } })();
+applyTheme(savedTheme);
+d3.select("#b-theme").on("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme") || "dark";
+  const nxt = cur === "dark" ? "light" : "dark";
+  applyTheme(nxt);
+  try { localStorage.setItem("pylier-theme", nxt); } catch { /* private mode */ }
+});
+
+window.addEventListener("resize", () => {
+  w = svg.node().clientWidth; h = svg.node().clientHeight;
+  svg.attr("viewBox", `0 0 ${w} ${h}`);
+  sim.force("center", d3.forceCenter(w / 2, h / 2));
+  sim.alpha(0.1).restart();
+});
+
+// initial render + auto-fit once the layout has had a moment to settle
+update();
+setTimeout(fit, 600);
+// static HTML (file://): replay the execution timeline once so the recorded
+// fire/pulse sequence shows what actually ran
+if (!LIVE) replayTimeline(loadData().events);
+</script>
+</body>
+</html>
