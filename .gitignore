@@ -11,6 +11,7 @@ wheels/
 
 # pylier generated outputs
 *.html
+!mockups/*.html
 .pytest_cache/
 .ruff_cache/
 .history/

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>pylier mockup 08 — Paper GitHub dark · force-directed</title><script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<style>
+:root{--paper:#0d1117;--ink:#e6edf3;--muted:#7d8590;--rule:#30363d;--card:#161b22;--blue:#2f81f7;--amber:#d29922;--green:#3fb950;--violet:#a371f7}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{overflow:hidden;background:var(--paper);color:var(--ink);font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
+header{height:68px;display:flex;align-items:center;padding:0 24px;border-bottom:1px solid #30363d;gap:16px;background:#161b22}header h1{font:700 20px ui-sans-serif,system-ui;margin:0;letter-spacing:-.04em}header .slash{color:#6e7681}.crumb{color:#7d8590}.spacer{flex:1}.stamp{border:1px solid var(--ink);border-radius:3px;padding:5px 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+main{height:calc(100% - 68px);display:grid;grid-template-columns:minmax(0,1fr) 300px}.canvas{min-width:0;position:relative}svg{width:100%;height:100%;display:block;background-image:radial-gradient(#21262d .7px,transparent .7px);background-size:18px 18px}aside{border-left:1px solid #30363d;background:#0d1117;padding:0}aside section{padding:18px;border-bottom:1px solid #30363d}aside h2{font-size:10px;text-transform:uppercase;letter-spacing:.13em;margin:0 0 14px;color:#7d8590}.row{display:grid;grid-template-columns:82px 1fr;gap:8px;padding:6px 0;border-bottom:1px dotted #30363d}.row:last-child{border:0}.row span:first-child{color:var(--muted)}.note{font:13px/1.55 ui-sans-serif,system-ui;color:#b1bac4}.key{display:flex;align-items:center;gap:8px;margin:8px 0}.key i{width:20px;height:2px}.stage-label{font-size:10px;fill:#6e7681;letter-spacing:.16em}.stage-rule{stroke:#21262d;stroke-dasharray:3 5}.edge{fill:none;stroke:#7d8590;stroke-width:1.5}.edge.control{stroke:var(--violet);stroke-dasharray:5 4}.edge.vector{stroke:var(--green);stroke-width:2}.edge:hover{stroke:var(--blue);stroke-width:3}.node{cursor:grab}.node .card{fill:var(--card);stroke:var(--ink);stroke-width:1}.node:hover .card{stroke-width:2}.node .status{stroke:none}.node .name{font-size:13px;font-weight:700;fill:var(--ink)}.node .module{font-size:10px;fill:var(--muted)}.node .latency{font-size:10px;fill:var(--ink);text-anchor:end}.node .num{font-size:9px;fill:#6e7681}.edge-label{font-size:9px;fill:#7d8590;text-anchor:middle;paint-order:stroke;stroke:var(--paper);stroke-width:5}.flow{position:absolute;left:18px;bottom:16px;padding:7px 9px;background:#161b22;border:1px solid #30363d;font-size:10px}
+</style></head>
+<body><header><h1>pylier</h1><span class="slash">/</span><span class="crumb">doc-ingest · run 2f91</span><span class="stamp">completed</span><div class="spacer"></div><span>1.42 s total</span></header>
+<main><div class="canvas"><svg id="viz"></svg><div class="flow">force-directed · rectilinear edges w/ rounded corners · arrow tangent to node border</div></div><aside><section><h2>Run summary</h2><div class="row"><span>started</span><b>12:44:08.120</b></div><div class="row"><span>nodes</span><b>7 / 7</b></div><div class="row"><span>handoffs</span><b>8</b></div><div class="row"><span>payload</span><b>18.4 MB</b></div></section><section><h2>Why this direction</h2><div class="note">Monochrome cards. Color carries meaning only for exceptional edge types and node status. Force-directed layout adapts to any shape — DAGs, loops, cross-references, and live-emerging nodes — no topological sort required.</div></section><section><h2>Semantics</h2><div class="key"><i style="background:#7d8590"></i>data</div><div class="key"><i style="background:#a371f7"></i>control</div><div class="key"><i style="background:#3fb950"></i>vectors</div><div class="key"><i style="background:#2f81f7"></i>active selection</div></section></aside></main>
+<script>
+const nodes=[
+{id:'load',name:'load_document',module:'sources.files',stage:0,row:1,ms:38},
+{id:'extract',name:'extract_text',module:'pipeline.parse',stage:1,row:0,ms:92},
+{id:'ocr',name:'ocr_images',module:'pipeline.vision',stage:1,row:2,ms:514},
+{id:'clean',name:'clean_text',module:'pipeline.clean',stage:2,row:1,ms:21},
+{id:'chunk',name:'split_chunks',module:'pipeline.chunk',stage:3,row:0,ms:16},
+{id:'embed',name:'embed_chunks',module:'pipeline.embed',stage:3,row:2,ms:618},
+{id:'index',name:'write_index',module:'sinks.vector',stage:4,row:1,ms:83}
+];
+const links=[{source:'load',target:'extract',type:'Document'},{source:'load',target:'ocr',type:'Images',kind:'control'},{source:'ocr',target:'extract',type:'OCR text'},{source:'extract',target:'clean',type:'Text'},{source:'clean',target:'chunk',type:'Text'},{source:'clean',target:'embed',type:'Text'},{source:'chunk',target:'embed',type:'Chunks'},{source:'embed',target:'index',type:'Vectors',kind:'vector'}];
+const W=172,H=66,svg=d3.select('#viz'),root=svg.append('g'),zoom=d3.zoom().scaleExtent([.5,2]).on('zoom',e=>root.attr('transform',e.transform));svg.call(zoom);const defs=svg.append('defs');[['ink','#7d8590'],['control','#a371f7'],['vector','#3fb950']].forEach(([k,c])=>defs.append('marker').attr('id',`p-${k}`).attr('viewBox','0 -4 8 8').attr('refX',7).attr('refY',0).attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto').attr('markerUnits','userSpaceOnUse').append('path').attr('d','M0,-4L8,0L0,4Z').attr('fill',c));
+/* no stage columns — force-directed layout */
+const edge=root.append('g').selectAll('path').data(links).join('path').attr('class',d=>`edge ${d.kind||''}`).attr('marker-end',d=>`url(#p-${d.kind||'ink'})`);const labels=root.append('g').selectAll('text').data(links).join('text').attr('class','edge-label').text(d=>d.type);
+const node=root.append('g').selectAll('g').data(nodes).join('g').attr('class','node').call(d3.drag().on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.2).restart();d.fx=d.x;d.fy=d.y}).on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y}).on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null}));node.append('rect').attr('class','card').attr('x',-W/2).attr('y',-H/2).attr('width',W).attr('height',H).attr('rx',2);node.append('rect').attr('class','status').attr('x',-W/2).attr('y',-H/2).attr('width',5).attr('height',H).attr('fill',d=>d.id==='embed'?'#2f81f7':'#3fb950');node.append('text').attr('class','num').attr('x',-W/2+13).attr('y',-15).text((d,i)=>String(i+1).padStart(2,'0'));node.append('text').attr('class','name').attr('x',-W/2+13).attr('y',3).text(d=>d.name);node.append('text').attr('class','module').attr('x',-W/2+13).attr('y',21).text(d=>d.module);node.append('text').attr('class','latency').attr('x',W/2-10).attr('y',-15).text(d=>`${d.ms} ms`);
+links.forEach((l,i)=>l._i=i);
+function route(d){
+  const s=d.source,t=d.target,dx=t.x-s.x,dy=t.y-s.y,sp=2,ap=8;
+  if(Math.abs(dx)>=Math.abs(dy)){
+    const sh=Math.sign(dx)||1,sv=Math.sign(dy)||0;
+    const ex=s.x+sh*(W/2+sp),ey=s.y,tx2=t.x-sh*(W/2+ap),ty=t.y;
+    const lo=Math.min(ex,tx2),hi=Math.max(ex,tx2),r=Math.min(14,Math.abs(ty-ey)/2);
+    let mx=(ex+tx2)/2+((d._i%3)-1)*22; mx=(hi-lo>2*r)?Math.max(lo+r,Math.min(hi-r,mx)):(lo+hi)/2;
+    if(Math.abs(dy)<8)return{path:`M${ex},${ey}H${tx2}`,x:(ex+tx2)/2,y:ey};
+    return{path:`M${ex},${ey}H${mx-sh*r}Q${mx},${ey} ${mx},${ey+sv*r}V${ty-sv*r}Q${mx},${ty} ${mx+sh*r},${ty}H${tx2}`,x:mx,y:(ey+ty)/2};
+  }
+  const sv=Math.sign(dy)||1,sh=Math.sign(dx)||0;
+  const ex=s.x,ey=s.y+sv*(H/2+sp),tx2=t.x,ty=t.y-sv*(H/2+ap);
+  const lo=Math.min(ey,ty),hi=Math.max(ey,ty),r=Math.min(14,Math.abs(tx2-ex)/2);
+  let my=(ey+ty)/2+((d._i%3)-1)*22; my=(hi-lo>2*r)?Math.max(lo+r,Math.min(hi-r,my)):(lo+hi)/2;
+  if(Math.abs(dx)<8)return{path:`M${ex},${ey}V${ty}`,x:ex,y:(ey+ty)/2};
+  return{path:`M${ex},${ey}V${my-sv*r}Q${ex},${my} ${ex+sh*r},${my}H${tx2-sh*r}Q${tx2},${my} ${tx2},${my+sv*r}V${ty}`,x:(ex+tx2)/2,y:my};
+}
+nodes.forEach(d=>{if(d.x===undefined){d.x=120+d.stage*200;d.y=150+d.row*180}});
+const sim=d3.forceSimulation(nodes).force('link',d3.forceLink(links).id(d=>d.id).distance(225).strength(.38)).force('charge',d3.forceManyBody().strength(-820).distanceMax(640)).force('collide',d3.forceCollide(Math.max(W,H)/2+20).iterations(2)).force('center',d3.forceCenter(640,300)).alpha(.45).on('tick',()=>{node.attr('transform',d=>`translate(${d.x},${d.y})`);edge.attr('d',d=>route(d).path);labels.attr('x',d=>route(d).x).attr('y',d=>route(d).y-7)});
+function fit(){const b=root.node().getBBox(),v=svg.node().getBoundingClientRect(),s=Math.min(1.1,.9/Math.max(b.width/v.width,b.height/v.height));svg.transition().duration(450).call(zoom.transform,d3.zoomIdentity.translate((v.width-b.width*s)/2-b.x*s,(v.height-b.height*s)/2-b.y*s).scale(s))}
+setTimeout(fit,550);
+</script></body></html>
