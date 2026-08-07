@@ -132,11 +132,15 @@ class Trace:
         self._cond = threading.Condition()
 
     def record_span(self, span: Span) -> None:
-        """Store an ended OTel span for this trace's expandable call tree."""
+        """Store or update an OTel span for this trace's expandable call tree."""
         with self._cond:
+            existing = self.spans.get(span.span_id)
+            if existing is not None:
+                self.spans[span.span_id] = span
+                self._bump_exec()
+                return
             is_new_shape = not any(
-                existing.name == span.name and existing.parent_span_id == span.parent_span_id
-                for existing in self.spans.values()
+                prior.name == span.name and prior.parent_span_id == span.parent_span_id for prior in self.spans.values()
             )
             self.spans[span.span_id] = span
             if is_new_shape:
@@ -148,11 +152,23 @@ class Trace:
         """Notify topology change (new node/edge). Caller holds ``_cond``."""
         self.graph_version += 1
         self._cond.notify_all()
+        self._notify_live_viewer()
 
     def _bump_exec(self) -> None:
         """Notify execution event appended. Caller holds ``_cond``."""
         self.exec_version += 1
         self._cond.notify_all()
+        self._notify_live_viewer()
+
+    @staticmethod
+    def _notify_live_viewer() -> None:
+        """Wake the optional viewer without coupling the neutral model at import time."""
+        try:
+            from pylier.server import notify_trace_change
+
+            notify_trace_change()
+        except ImportError:
+            pass
 
     def record_event(self, event: Event) -> None:
         """Append an enter/exit event to the timeline and notify waiters."""

@@ -32,6 +32,18 @@ def test_decorated_nodes_emit_nested_otel_spans_without_logfire():
     assert spans["child"].parent_span_id == spans["parent"].span_id
 
 
+def test_otel_spans_are_visible_while_still_running():
+    from opentelemetry import trace as otel_trace
+
+    with (
+        pylier.trace("live-otel") as traced,
+        otel_trace.get_tracer("example").start_as_current_span("GET /stream"),
+    ):
+        span = next(item for item in traced.spans.values() if item.name == "GET /stream")
+        assert span.status == "running"
+        assert span.ended_ns is None
+
+
 def test_standard_otel_spans_are_captured_in_the_active_pylier_trace():
     from opentelemetry import trace as otel_trace
 

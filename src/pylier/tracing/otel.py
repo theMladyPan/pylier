@@ -29,12 +29,16 @@ def _hex(identifier: int) -> str:
 
 
 class _PylierSpanProcessor(SpanProcessor):
-    """Copies ended standard OTel spans into their matching pylier trace."""
+    """Copies standard OTel spans into their matching pylier trace lifecycle."""
 
     def on_start(self, span: ReadableSpan, parent_context: object | None = None) -> None:
-        pass
+        self._record(span, ended=False)
 
     def on_end(self, readable_span: ReadableSpan) -> None:
+        self._record(readable_span, ended=True)
+
+    @staticmethod
+    def _record(readable_span: ReadableSpan, *, ended: bool) -> None:
         context = readable_span.context
         trace_id = _hex(context.trace_id)
         with _lock:
@@ -49,8 +53,8 @@ class _PylierSpanProcessor(SpanProcessor):
                 parent_span_id=parent_span_id,
                 name=readable_span.name,
                 started_ns=readable_span.start_time,
-                ended_ns=readable_span.end_time,
-                status=readable_span.status.status_code.name.lower(),
+                ended_ns=readable_span.end_time if ended else None,
+                status=readable_span.status.status_code.name.lower() if ended else "running",
                 attributes={key: str(value) for key, value in readable_span.attributes.items()},
             )
         )

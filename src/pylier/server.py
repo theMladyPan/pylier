@@ -23,7 +23,7 @@ from typing import Any
 from pylier.model import Trace
 from pylier.render import build_html
 
-__all__ = ["serve", "register_trace"]
+__all__ = ["serve", "register_trace", "notify_trace_change"]
 
 # SSE heartbeat cadence: if nothing changed for this long, send a comment line
 # to keep the HTTP connection alive through proxies/timeouts.
@@ -50,6 +50,12 @@ def _reset_registry(trace: Trace) -> None:
     with _registry_lock:
         _registry[:] = [trace]
         _registry_version += 1
+        _registry_lock.notify_all()
+
+
+def notify_trace_change() -> None:
+    """Wake SSE clients after a registered trace changes."""
+    with _registry_lock:
         _registry_lock.notify_all()
 
 
