@@ -28,6 +28,18 @@ def type_name(value: Any) -> str:
     return getattr(cls, "__qualname__", None) or cls.__name__
 
 
+def tuple_member_type_names(value: Any) -> tuple[str, ...]:
+    """Return 2–3 distinct member types for a heterogeneous tuple.
+
+    This small structural detail lets the renderer distinguish a tuple carrying
+    a few different values without capturing or serializing those values.
+    """
+    if not isinstance(value, tuple):
+        return ()
+    member_types = tuple(dict.fromkeys(type_name(member) for member in value))
+    return member_types if 2 <= len(member_types) <= 3 else ()
+
+
 def size_of(value: Any) -> int | None:
     try:
         return len(value)
@@ -89,4 +101,4 @@ def _content_hash(value: Any) -> str:
     return hashlib.sha1(payload, usedforsecurity=False).hexdigest()[:12]
 
 
-__all__ = ["fingerprint", "type_name", "size_of", "preview_of", "serialize_value"]
+__all__ = ["fingerprint", "type_name", "tuple_member_type_names", "size_of", "preview_of", "serialize_value"]

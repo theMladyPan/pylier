@@ -23,11 +23,11 @@ import contextvars
 import functools
 import inspect
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from pylier.fingerprint import fingerprint, preview_of, serialize_value, size_of, type_name
+from pylier.fingerprint import fingerprint, preview_of, serialize_value, size_of, tuple_member_type_names, type_name
 from pylier.model import Edge, Event, Level, Node, Trace
 
 __all__ = [
@@ -64,7 +64,7 @@ class NodeMeta:
     name: str
     module: str
     level: Level
-    tags: dict[str, str]
+    tags: tuple[str, ...]
     is_async: bool = False
 
 
@@ -157,7 +157,7 @@ def _make_node(meta: NodeMeta) -> Node:
         name=meta.name,
         module=meta.module,
         level=meta.level,
-        tags=dict(meta.tags),
+        tags=meta.tags,
         is_async=meta.is_async,
     )
 
@@ -189,7 +189,7 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> Non
             payload_type=type_name(arg),
             size=size_of(arg) if level >= Level.INFO else None,
             preview=preview_of(arg) if level >= Level.DEBUG else None,
-            tags=meta.tags,
+            payload_types=tuple_member_type_names(arg),
             value=serialize_value(arg) if capture else None,
         )
         fired.append({"source": source_id, "target": meta.id})
@@ -231,6 +231,7 @@ def _emit(trace: Trace, meta: NodeMeta, result: Any, return_type: str | None) ->
         "name": meta.name,
         "module": meta.module,
         "level": int(level),
+        "tags": list(meta.tags),
         "return_type": return_type,
         "result_preview": preview_of(result) if level >= Level.DEBUG and result is not None else None,
         "edges": edges_out,
@@ -248,7 +249,7 @@ def _edge_dict(edge: Edge) -> dict[str, Any]:
         "payload": edge.payload_type,
         "size": edge.size,
         "preview": edge.preview,
-        "tags": edge.tags,
+        "payload_types": list(edge.payload_types),
         "count": edge.count,
         "value": edge.value,
     }
@@ -292,7 +293,7 @@ async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]]
         record_exit(trace, meta, result, exc, (time.perf_counter() - start) * 1000.0)
 
 
-def make_meta(func: Callable[..., Any], level: Level, tags: dict[str, str]) -> NodeMeta:
+def make_meta(func: Callable[..., Any], level: Level, tags: tuple[str, ...]) -> NodeMeta:
     module = getattr(func, "__module__", "unknown") or "unknown"
     name = getattr(func, "__qualname__", getattr(func, "__name__", "anonymous"))
     node_id = f"{module}.{name}"
@@ -301,25 +302,42 @@ def make_meta(func: Callable[..., Any], level: Level, tags: dict[str, str]) -> N
     )
 
 
+def _normalize_tags(tags: Sequence[str]) -> tuple[str, ...]:
+    """Validate Logfire-style node tags while preserving caller order."""
+    if not isinstance(tags, Sequence) or isinstance(tags, (str, bytes)):
+        raise TypeError("_tags must be a sequence of strings, not a string")
+    normalized: list[str] = []
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise TypeError("_tags must contain only strings")
+        cleaned = tag.strip()
+        if not cleaned:
+            raise ValueError("_tags must not contain empty strings")
+        if cleaned not in normalized:
+            normalized.append(cleaned)
+    return tuple(normalized)
+
+
 def node_decorator(
     func: Callable[..., Any] | None = None,
     *,
     level: Level | str = Level.INFO,
-    **tags: str,
+    _tags: Sequence[str] = (),
 ) -> Any:
     """Decorate a sync/async callable as a pipeline node.
 
     Args:
         level: Per-node capture level. ``"core"`` nodes record even at the
             lowest global level; ``"trace"`` only when verbosity is maxed.
-        **tags: Free-form metadata attached to the node and its inbound edges.
-            Use ``payload_kind="trigger"`` to drive edge stroke style in the
-            renderer (data/trigger/job/telemetry/code).
+        _tags: Logfire-style labels attached to this node. They support node
+            inspection and client-side node filtering; inferred edges stay
+            tag-less.
     """
     resolved_level = _coerce_level(level)
+    normalized_tags = _normalize_tags(_tags)
 
     def wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
-        meta = make_meta(fn, resolved_level, tags)
+        meta = make_meta(fn, resolved_level, normalized_tags)
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)

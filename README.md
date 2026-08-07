@@ -19,7 +19,7 @@ import pylier
 @pylier.node
 def load(path: str) -> dict: ...
 
-@pylier.node(payload_kind="trigger")
+@pylier.node(_tags=["document", "text"])
 def extract(doc: dict) -> list[str]: ...
 
 @pylier.node
@@ -47,7 +47,21 @@ with pylier.set_level("debug"):   # core < info < debug < trace
 ```
 
 Levels (`core` < `info` < `debug` < `trace`) control both which nodes are
-captured and how much payload metadata (type, size, preview, tags) is recorded.
+captured and how much payload metadata (type, size, preview) is recorded.
+
+### Node tags and edge colors
+
+Use Logfire-style node tags for inspection and graph filtering:
+
+```python
+@pylier.node(_tags=["document", "embedding"])
+def embed(chunks: list[str]) -> list[dict]: ...
+```
+
+Tags belong to nodes, never inferred edges. The viewer colors every edge from
+its inferred payload type (`bool`, `int`, `float`, `str`, `list`, `dict`,
+`set`/`tuple`, binary, or other). A heterogeneous tuple carrying two or three
+distinct member types gets a matching multi-color edge.
 
 ### Inspecting flowing data
 

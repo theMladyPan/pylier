@@ -9,7 +9,7 @@ or a live in-process viewer. API mirrors logfire's flat, decoration-first feel:
     @pylier.node
     def load(path: str) -> Document: ...
 
-    @pylier.node(payload_kind="trigger")
+    @pylier.node(_tags=["ocr", "document"])
     def ocr(img) -> str: ...
 
     with pylier.trace("ingest"):
@@ -21,6 +21,7 @@ or a live in-process viewer. API mirrors logfire's flat, decoration-first feel:
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -56,18 +57,22 @@ __all__ = [
 __version__ = "0.1.0"
 
 
-def node(func: Any = None, *, level: Level | str = Level.INFO, **tags: str) -> Any:
+def node(
+    func: Any = None,
+    *,
+    level: Level | str = Level.INFO,
+    _tags: Sequence[str] = (),
+) -> Any:
     """Decorate a sync or async function/method as a pipeline node.
 
     Args:
         level: Per-node capture level ("core" | "info" | "debug" | "trace").
             The node is recorded only when the active global level is at least
             this verbose.
-        **tags: Metadata attached to the node and its inbound edges. Use
-            ``payload_kind="trigger"`` to control edge stroke style in the
-            rendered graph.
+        _tags: Logfire-style labels attached to the node for inspection and
+            client-side filtering. Inferred edges deliberately have no tags.
     """
-    return _node_decorator(func, level=level, **tags)
+    return _node_decorator(func, level=level, _tags=_tags)
 
 
 @contextlib.contextmanager

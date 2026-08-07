@@ -24,25 +24,25 @@ def load_document(path: str) -> dict:
     return {"path": path, "pages": ["page1 text", "page2 text"], "images": ["img1.png"]}
 
 
-@pylier.node(payload_kind="trigger")
+@pylier.node(_tags=["document", "text"])
 def extract_text(doc: dict) -> list[str]:
     time.sleep(_STEP_DELAY)
     return [p.upper() for p in doc["pages"]]
 
 
-@pylier.node
+@pylier.node(_tags=["document", "images"])
 def ocr_images(doc: dict) -> list[str]:
     time.sleep(_STEP_DELAY)
     return [f"ocr:{img}" for img in doc["images"]]
 
 
-@pylier.node
+@pylier.node(_tags=["embedding"])
 def embed(chunks: list[str]) -> list[dict]:
     time.sleep(_STEP_DELAY)
     return [{"vec": [len(c), 0], "text": c} for c in chunks]
 
 
-@pylier.node
+@pylier.node(_tags=["indexing"])
 def index(vectors: list[dict]) -> int:
     time.sleep(_STEP_DELAY)
     return len(vectors)

@@ -6,6 +6,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 import pylier
 
 
@@ -31,20 +33,77 @@ def test_sync_edge_inferred_from_returned_value():
     assert edge.payload_type == "dict"
 
 
-def test_tags_flow_to_edge_payload_kind():
+def test_logfire_style_node_tags_are_serialized_on_nodes_only():
     @pylier.node
     def emit():
-        return "trigger-val"
+        return "tagged-value"
 
-    @pylier.node(payload_kind="trigger")
+    @pylier.node(_tags=[" ingest ", "critical", "ingest"])
     def handle(event):
         return event
 
     with pylier.trace() as tr:
         handle(emit())
 
+    node = next(node for node in tr.nodes.values() if node.name.endswith("handle"))
+    assert node.tags == ("ingest", "critical")
+    graph = tr.to_graph_dict()
+    tagged = next(node for node in graph["nodes"] if node["name"].endswith("handle"))
+    assert tagged["tags"] == ["ingest", "critical"]
+    assert "tags" not in graph["links"][0]
+
+
+@pytest.mark.parametrize(
+    ("tags", "error"),
+    [(["valid", ""], ValueError), (["valid", 1], TypeError)],
+)
+def test_node_tags_are_validated(tags, error):
+    with pytest.raises(error):
+        pylier.node(_tags=tags)(lambda: None)
+
+
+def test_heterogeneous_tuple_records_member_types_for_rendering():
+    @pylier.node
+    def emit():
+        return (True, 3, "three")
+
+    @pylier.node
+    def handle(payload):
+        return payload
+
+    with pylier.trace() as tr:
+        handle(emit())
+
     edge = next(iter(tr.edges.values()))
-    assert edge.tags["payload_kind"] == "trigger"
+    assert edge.payload_type == "tuple"
+    assert edge.payload_types == ("bool", "int", "str")
+
+
+def test_string_and_binary_edges_are_serialized_without_tags():
+    @pylier.node
+    def emit_text():
+        return "text"
+
+    @pylier.node
+    def emit_binary():
+        return b"binary"
+
+    @pylier.node
+    def handle_text(payload):
+        return payload
+
+    @pylier.node
+    def handle_binary(payload):
+        return payload
+
+    with pylier.trace() as tr:
+        handle_text(emit_text())
+        handle_binary(emit_binary())
+
+    graph = tr.to_graph_dict()
+    assert {edge["payload"] for edge in graph["links"]} == {"str", "bytes"}
+    assert all(edge["payload_types"] == [] for edge in graph["links"])
+    assert all("tags" not in edge for edge in graph["links"])
 
 
 def test_branching_pipeline_inferred():
@@ -162,6 +221,9 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert graph["name"] == "render-test"
     assert len(graph["nodes"]) == 2
     assert len(graph["links"]) == 1
+    assert "TYPE_COLOR" in html
+    assert "tag-options" in html
+    assert "payload_kind" not in html
 
 
 def test_render_embedded_data_block_is_valid_json(tmp_path: Path):
@@ -223,7 +285,7 @@ def test_trace_isolation_between_contexts():
 
 
 def test_sidecar_writes_events(tmp_path: Path):
-    @pylier.node
+    @pylier.node(_tags=["source"])
     def produce():
         return "payload"
 
@@ -240,6 +302,7 @@ def test_sidecar_writes_events(tmp_path: Path):
     # one exit-event per captured node
     assert len(lines) == 2
     assert all("node_id" in ev and "edges" in ev for ev in lines)
+    assert any(event["tags"] == ["source"] for event in lines)
 
 
 def test_size_and_preview_captured_at_debug():

@@ -17,12 +17,12 @@ class Level(IntEnum):
 
     Ranks increase with verbosity. A node is recorded only when its declared
     level rank is <= the active global level rank, so raising the global level
-    to ``DEBUG`` enables core+info+debug nodes. Metadata richness (size,
-    preview, tags) is driven by the effective level too:
+    to ``DEBUG`` enables core+info+debug nodes. Metadata richness (size and
+    preview) is driven by the effective level; declared node tags are retained:
 
     * ``CORE``  - structural identity only (node + bare edges), no payload detail
     * ``INFO``  - + payload type + size
-    * ``DEBUG`` - + short value preview + user tags
+    * ``DEBUG`` - + short value preview
     * ``TRACE`` - + detailed previews / fingerprints
     """
 
@@ -40,7 +40,7 @@ class Node:
     name: str
     module: str
     level: Level = Level.INFO
-    tags: dict[str, str] = field(default_factory=dict)
+    tags: tuple[str, ...] = ()
     calls: int = 0
     is_async: bool = False
     last_ms: float | None = None
@@ -56,7 +56,9 @@ class Edge:
     payload_type: str = "unknown"
     size: int | None = None
     preview: str | None = None
-    tags: dict[str, str] = field(default_factory=dict)
+    # Member types are populated only for heterogeneous tuples with 2–3
+    # distinct types; the renderer uses them for a compact gradient.
+    payload_types: tuple[str, ...] = ()
     count: int = 1
     # full serialized payload — only populated when capture_values is on;
     # binary payloads are truncated to a summary (see fingerprint.serialize_value)
@@ -184,7 +186,7 @@ class Trace:
         payload_type: str,
         size: int | None,
         preview: str | None,
-        tags: dict[str, str],
+        payload_types: tuple[str, ...] = (),
         value: str | None = None,
     ) -> Edge:
         with self._cond:
@@ -197,7 +199,7 @@ class Trace:
                     payload_type=payload_type,
                     size=size,
                     preview=preview,
-                    tags=dict(tags),
+                    payload_types=payload_types,
                     value=value,
                 )
                 self.edges[key] = edge
@@ -210,7 +212,8 @@ class Trace:
                     edge.preview = preview
                 if value is not None:
                     edge.value = value
-                edge.tags.update(tags)
+                if payload_types:
+                    edge.payload_types = payload_types
             return edge
 
     def register_return(self, fingerprint: str, node_id: str) -> None:
@@ -236,7 +239,7 @@ class Trace:
                         "name": n.name,
                         "category": n.module,
                         "env": [],
-                        "tags": n.tags,
+                        "tags": list(n.tags),
                         "calls": n.calls,
                         "is_async": n.is_async,
                         "last_ms": n.last_ms,
@@ -251,7 +254,7 @@ class Trace:
                         "payload": e.payload_type,
                         "size": e.size,
                         "preview": e.preview,
-                        "tags": e.tags,
+                        "payload_types": list(e.payload_types),
                         "count": e.count,
                         "value": e.value,
                     }

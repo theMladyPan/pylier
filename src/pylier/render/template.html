@@ -19,10 +19,15 @@
     --ink: #e6edf3;
     --node-stroke: #30363d;
     --dot: #21262d;
-    --edge-data: #7d8590;
-    --edge-control: #a371f7;
-    --edge-telemetry: #d29922;
-    --edge-code: #2f81f7;
+    --type-bool: #a371f7;
+    --type-int: #2f81f7;
+    --type-float: #39c5cf;
+    --type-str: #f778ba;
+    --type-list: #3fb950;
+    --type-dict: #d29922;
+    --type-tuple: #db61a2;
+    --type-binary: #7d8590;
+    --type-other: #7d8590;
     --fire: #2f81f7;
     --st-busy: #2f81f7;   /* sync executing */
     --st-wait: #d29922;   /* async waiting */
@@ -42,10 +47,15 @@
     --ink: #1f2328;
     --node-stroke: #d0d7de;
     --dot: #d0d7de;
-    --edge-data: #57606a;
-    --edge-control: #8250df;
-    --edge-telemetry: #9a6700;
-    --edge-code: #0969da;
+    --type-bool: #8250df;
+    --type-int: #0969da;
+    --type-float: #0a7c86;
+    --type-str: #bf3989;
+    --type-list: #1a7f37;
+    --type-dict: #9a6700;
+    --type-tuple: #bf3989;
+    --type-binary: #656d76;
+    --type-other: #656d76;
     --fire: #0969da;
     --st-busy: #0969da;
     --st-wait: #9a6700;
@@ -82,25 +92,45 @@
   }
   #header .theme-btn:hover { border-color: var(--accent); }
 
-  #main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 320px; min-height: 0; }
+  #main {
+    --filter-w: 240px;
+    --sidebar-w: 320px;
+    flex: 1; display: grid; grid-template-columns: var(--filter-w) minmax(0, 1fr) var(--sidebar-w);
+    min-height: 0;
+  }
+  #main.filters-collapsed { grid-template-columns: 34px minmax(0, 1fr) var(--sidebar-w); }
+  #main.sidebar-collapsed { grid-template-columns: var(--filter-w) minmax(0, 1fr) 34px; }
+  #main.filters-collapsed.sidebar-collapsed { grid-template-columns: 34px minmax(0, 1fr) 34px; }
+  #graph-wrap { position: relative; min-width: 0; }
   #graph {
     min-width: 0; background: var(--bg);
     background-image: radial-gradient(var(--dot) .7px, transparent .7px);
     background-size: 18px 18px;
   }
   svg { width: 100%; height: 100%; display: block; }
-  .flow-note {
-    position: absolute; left: 16px; bottom: 12px; padding: 6px 9px;
-    background: var(--panel-2); border: 1px solid var(--panel-border);
-    font-size: 10px; color: var(--muted); pointer-events: none;
-  }
 
-  #sidebar {
-    border-left: 1px solid var(--panel-border); background: var(--panel-bg);
-    overflow: auto; padding: 0;
+  #filters, #sidebar { background: var(--panel-bg); overflow: auto; min-width: 0; }
+  #filters { border-right: 1px solid var(--panel-border); }
+  #sidebar { border-left: 1px solid var(--panel-border); position: relative; }
+  .pane-head {
+    height: 40px; padding: 0 10px; border-bottom: 1px solid var(--panel-border);
+    display: flex; align-items: center; justify-content: space-between;
   }
-  #sidebar section { padding: 16px; border-bottom: 1px solid var(--panel-border); }
-  #sidebar h2 { font-size: 10px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .13em; }
+  .pane-head h2 { font-size: 10px; margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: .13em; }
+  .pane-toggle {
+    border: 0; background: transparent; color: var(--muted); padding: 5px; cursor: pointer;
+    font: 14px var(--mono);
+  }
+  .pane-toggle:hover { color: var(--accent); }
+  #filters.filter-collapsed, #sidebar.sidebar-collapsed { overflow: hidden; }
+  #filters.filter-collapsed .pane-content, #sidebar.sidebar-collapsed .pane-content { display: none; }
+  #filters.filter-collapsed .pane-head, #sidebar.sidebar-collapsed .pane-head { height: 100%; padding: 8px; align-items: flex-start; }
+  #filters.filter-collapsed .pane-head h2, #sidebar.sidebar-collapsed .pane-head h2 { display: none; }
+  #filters section, #sidebar section { padding: 16px; border-bottom: 1px solid var(--panel-border); }
+  #filters section h2, #sidebar section h2 { font-size: 10px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .13em; }
+  .resize-handle { position: absolute; z-index: 2; left: -5px; top: 0; width: 10px; height: 100%; cursor: col-resize; }
+  .resize-handle:hover, .resize-handle.dragging { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+  #sidebar.sidebar-collapsed .resize-handle { display: none; }
   .summary .row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px dotted var(--panel-border); font-size: 13px; }
   .summary .row:last-child { border: 0; }
   .summary .row span:first-child { color: var(--muted); }
@@ -124,12 +154,29 @@
     border-radius: 6px; padding: 6px 10px; cursor: pointer; font: 12px var(--mono);
   }
   .controls button:hover { border-color: var(--accent); }
-  .legend .key { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
-  .legend .key i { display: inline-block; width: 20px; height: 0; border-top: 2px solid; }
-  .legend .key i.dashed { border-top-style: dashed; }
-  .legend .key i.dotted { border-top-style: dotted; }
-  .legend .key i.dashdot { border-top-style: dashed; border-top-width: 2px; }
-  .legend .key .dotsw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:0; }
+  .tag-options { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag-option, .tag-chip {
+    border: 1px solid var(--panel-border); border-radius: 999px; padding: 3px 7px;
+    color: var(--muted); background: var(--panel-2); font: 11px var(--mono);
+  }
+  .tag-option { cursor: pointer; }
+  .tag-option.selected { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel-2)); }
+  .filter-empty { color: var(--muted); font-size: 12px; font-style: italic; }
+  .filter-mode { display: flex; gap: 12px; margin-top: 12px; font-size: 12px; }
+  .filter-mode label { cursor: pointer; }
+  #footer {
+    min-height: 34px; padding: 0 16px; border-top: 1px solid var(--panel-border); background: var(--panel-2);
+    display: flex; align-items: center; gap: 14px; overflow-x: auto; white-space: nowrap;
+    color: var(--muted); font-size: 10px;
+  }
+  #footer .foot-note { margin-right: auto; }
+  .type-key { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
+  .type-key i { width: 12px; height: 2px; display: inline-block; }
+  .type-key .bool { background: var(--type-bool); }.type-key .int { background: var(--type-int); }
+  .type-key .float { background: var(--type-float); }.type-key .str { background: var(--type-str); }
+  .type-key .list { background: var(--type-list); }.type-key .dict { background: var(--type-dict); }
+  .type-key .tuple { background: var(--type-tuple); }.type-key .binary { background: var(--type-binary); }
+  .type-key .other { background: var(--type-other); }
 
   /* node cards: monochrome, dynamic width, status stripe */
   .node { cursor: grab; }
@@ -148,6 +195,7 @@
   .link { fill: none; opacity: .8; stroke-width: 1.5px; }
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
+  .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden { display: none; }
   /* Execution feedback stays understated: a short handoff flash plus a slow
      breathing border while a node is active. The status stripe remains primary. */
   .link.firing { opacity: .95; stroke-width: 2px; filter: drop-shadow(0 0 2px var(--fire)); }
@@ -173,67 +221,110 @@
   <button class="theme-btn" id="b-theme">☀ light</button>
 </div>
 <div id="main">
-  <div style="position:relative; min-width:0;">
+  <aside id="filters" aria-label="Filters">
+    <div class="pane-head"><h2>Filters</h2><button class="pane-toggle" id="b-filters" title="Collapse filters">‹</button></div>
+    <div class="pane-content">
+      <section id="tag-filter">
+        <h2>Tags</h2>
+        <div id="tag-options" class="tag-options"></div>
+        <div id="tag-empty" class="filter-empty">No node tags in this run.</div>
+        <div class="filter-mode">
+          <label><input type="radio" name="tag-mode" value="any" checked /> Any</label>
+          <label><input type="radio" name="tag-mode" value="all" /> All</label>
+        </div>
+      </section>
+      <section class="controls">
+        <h2>View</h2>
+        <label><input type="checkbox" id="c-labels" checked /> Show edge labels</label>
+        <label><input type="checkbox" id="c-anim" checked /> Animate execution</label>
+        <div class="btns">
+          <button id="b-fit">Fit view</button>
+          <button id="b-reset">Reset</button>
+        </div>
+      </section>
+    </div>
+  </aside>
+  <div id="graph-wrap">
     <svg id="graph"></svg>
-    <div class="flow-note">force-directed · rectilinear edges w/ rounded corners · arrow tangent to node border</div>
   </div>
-  <div id="sidebar">
-    <section class="summary" id="summary">
-      <h2>Run summary</h2>
-      <div class="row"><span>nodes</span><b id="s-nodes">0</b></div>
-      <div class="row"><span>handoffs</span><b id="s-handoffs">0</b></div>
-      <div class="row"><span>duration</span><b id="s-dur">—</b></div>
-      <div class="row"><span>trace</span><b id="s-trace">—</b></div>
-    </section>
-    <section id="details">
-      <h2>Details</h2>
-      <div class="empty">Click a node or edge to inspect.</div>
-    </section>
-    <section class="controls">
-      <h2>View</h2>
-      <label><input type="checkbox" id="c-telemetry" checked /> Show telemetry edges</label>
-      <label><input type="checkbox" id="c-code" checked /> Show code-dep edges</label>
-      <label><input type="checkbox" id="c-labels" checked /> Show edge labels</label>
-      <label><input type="checkbox" id="c-anim" checked /> Animate execution</label>
-      <div class="btns">
-        <button id="b-fit">Fit view</button>
-        <button id="b-reset">Reset</button>
-      </div>
-    </section>
-    <section class="legend">
-      <h2>Semantics</h2>
-      <div class="key"><i style="border-top-color:var(--edge-data)"></i> data</div>
-      <div class="key"><i class="dashed" style="border-top-color:var(--edge-control)"></i> trigger / job</div>
-      <div class="key"><i class="dotted" style="border-top-color:var(--edge-telemetry)"></i> telemetry</div>
-      <div class="key"><i class="dashdot" style="border-top-color:var(--edge-code)"></i> code dep</div>
-      <div class="key" style="margin-top:10px"><span class="dotsw" style="background:var(--st-busy)"></span> sync busy</div>
-      <div class="key"><span class="dotsw" style="background:var(--st-wait)"></span> async waiting</div>
-      <div class="key"><span class="dotsw" style="background:var(--st-idle)"></span> idle / done</div>
-    </section>
-  </div>
+  <aside id="sidebar" aria-label="Run and details">
+    <div class="resize-handle" id="sidebar-resize"></div>
+    <div class="pane-head"><h2>Run + details</h2><button class="pane-toggle" id="b-sidebar" title="Collapse details">›</button></div>
+    <div class="pane-content">
+      <section class="summary" id="summary">
+        <h2>Run summary</h2>
+        <div class="row"><span>nodes</span><b id="s-nodes">0</b></div>
+        <div class="row"><span>handoffs</span><b id="s-handoffs">0</b></div>
+        <div class="row"><span>duration</span><b id="s-dur">—</b></div>
+        <div class="row"><span>trace</span><b id="s-trace">—</b></div>
+      </section>
+      <section id="details">
+        <h2>Details</h2>
+        <div class="empty">Click a node or edge to inspect.</div>
+      </section>
+    </div>
+  </aside>
 </div>
+<footer id="footer">
+  <span class="foot-note">force-directed · rounded orthogonal edges · colors show inferred payload type</span>
+  <span class="type-key"><i class="bool"></i>bool</span><span class="type-key"><i class="int"></i>int</span>
+  <span class="type-key"><i class="float"></i>float</span><span class="type-key"><i class="str"></i>str</span>
+  <span class="type-key"><i class="list"></i>list</span><span class="type-key"><i class="dict"></i>dict</span>
+  <span class="type-key"><i class="tuple"></i>set / tuple</span><span class="type-key"><i class="binary"></i>binary</span>
+  <span class="type-key"><i class="other"></i>other</span>
+</footer>
 
 <script id="embedded-data" type="application/json">__PYLIER_GRAPH_JSON__</script>
 <script>
 const RAW = __PYLIER_GRAPH__;
 
-// payload_kind -> stroke style + color token
-const STROKE = { data: "solid", trigger: "dashed", job: "dashed", telemetry: "dotted", code: "dashdot", unknown: "solid" };
-const STROKE_DASH = { solid: "none", dashed: "8 4", dotted: "2 4", dashdot: "8 4 2 4" };
-const KIND_COLOR = {
-  data: "var(--edge-data)", trigger: "var(--edge-control)", job: "var(--edge-control)",
-  telemetry: "var(--edge-telemetry)", code: "var(--edge-code)", unknown: "var(--edge-data)",
+// Edge color expresses inferred payload type. Tuple member types are included
+// only for 2–3-type heterogeneous tuples, enabling a readable native SVG gradient.
+const TYPE_COLOR = {
+  bool: "var(--type-bool)", int: "var(--type-int)", float: "var(--type-float)",
+  str: "var(--type-str)", list: "var(--type-list)", dict: "var(--type-dict)",
+  tuple: "var(--type-tuple)", binary: "var(--type-binary)", other: "var(--type-other)",
 };
-// solid fill used by the per-kind arrow markers (CSS vars don't work inside
-// <marker> fills reliably across browsers, so we resolve concrete colors).
-const KIND_FILL = {
-  dark: { data: "#7d8590", trigger: "#a371f7", job: "#a371f7", telemetry: "#d29922", code: "#2f81f7", unknown: "#7d8590" },
-  light: { data: "#57606a", trigger: "#8250df", job: "#8250df", telemetry: "#9a6700", code: "#0969da", unknown: "#57606a" },
+const TYPE_FILL = {
+  dark: { bool: "#a371f7", int: "#2f81f7", float: "#39c5cf", str: "#f778ba", list: "#3fb950", dict: "#d29922", tuple: "#db61a2", binary: "#7d8590", other: "#7d8590" },
+  light: { bool: "#8250df", int: "#0969da", float: "#0a7c86", str: "#bf3989", list: "#1a7f37", dict: "#9a6700", tuple: "#bf3989", binary: "#656d76", other: "#656d76" },
 };
-function kindColorOf(d) { return KIND_COLOR[d._kind] || KIND_COLOR.unknown; }
-function kindFillOf(d) {
-  const t = document.documentElement.getAttribute("data-theme") || "dark";
-  return (KIND_FILL[t] || KIND_FILL.dark)[d._kind] || (KIND_FILL[t] || KIND_FILL.dark).unknown;
+function payloadCategory(payload) {
+  const type = String(payload || "unknown").toLowerCase();
+  if (type === "bool") return "bool";
+  if (type === "int") return "int";
+  if (type === "float") return "float";
+  if (type === "str") return "str";
+  if (type === "list") return "list";
+  if (type === "dict") return "dict";
+  if (type === "set" || type === "tuple" || type === "frozenset") return "tuple";
+  if (["bytes", "bytearray", "memoryview", "binary"].includes(type)) return "binary";
+  return "other";
+}
+function typeColorOf(d) { return TYPE_COLOR[payloadCategory(d.payload)]; }
+function typeFillOf(category) {
+  const theme = document.documentElement.getAttribute("data-theme") || "dark";
+  return (TYPE_FILL[theme] || TYPE_FILL.dark)[category] || TYPE_FILL.dark.other;
+}
+function endpointId(endpoint) { return endpoint && endpoint.id ? endpoint.id : endpoint; }
+function edgeKey(d) { return `${endpointId(d.source)}|${endpointId(d.target)}`; }
+function edgeHash(d) {
+  let hash = 0;
+  for (const char of edgeKey(d)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash.toString(16);
+}
+function gradientId(d) { return `edge-gradient-${edgeHash(d)}`; }
+function tupleGradientCategories(d) {
+  if (String(d.payload || "").toLowerCase() !== "tuple") return [];
+  const categories = [...new Set((d.payload_types || []).map(payloadCategory))];
+  return categories.length >= 2 && categories.length <= 3 ? categories : [];
+}
+function edgeStroke(d) {
+  return tupleGradientCategories(d).length ? `url(#${gradientId(d)})` : typeColorOf(d);
+}
+function edgeLabel(d) {
+  const members = d.payload_types || [];
+  return members.length ? `tuple<${members.join(", ")}>` : (d.payload || "unknown");
 }
 
 // node card geometry: width grows with the longer of name/module (+ room for
@@ -246,15 +337,6 @@ function nodeW(d) {
 function fmtMs(v) {
   if (v == null) return null;
   return v < 1 ? v.toFixed(2) : v < 100 ? Math.round(v) + "" : Math.round(v) + "";
-}
-
-function payloadKind(edge) {
-  if (edge.tags && edge.tags.payload_kind) return edge.tags.payload_kind;
-  const p = (edge.payload || "").toLowerCase();
-  if (/trigger|event|signal/.test(p)) return "trigger";
-  if (/job|task/.test(p)) return "job";
-  if (/metric|log|telemetry|span/.test(p)) return "telemetry";
-  return "data";
 }
 
 function loadData() {
@@ -277,7 +359,7 @@ if (LIVE) {
   es.onerror = () => { es.close(); };
 }
 
-let state = { showTelemetry: true, showCode: true, showLabels: true, animate: true, selected: null };
+let state = { showLabels: true, animate: true, selected: null, tagFilter: new Set(), tagMode: "any" };
 // nodes currently executing (enter seen, exit not) — drives the status stripe
 const active = new Set();
 
@@ -294,19 +376,33 @@ const zoom = d3.zoom().scaleExtent([0.2, 4]).on("zoom", (e) => root.attr("transf
 svg.call(zoom);
 
 const defs = svg.append("defs");
-// per-kind arrow markers (mockup style): concrete fill so the head matches the
-// edge color; markerUnits=userSpaceOnUse keeps the head a constant size while a
-// firing edge thickens. Recreated on theme toggle (see applyTheme).
+// Concrete marker fills keep SVG arrowheads consistent across dark/light themes.
+// Tuple gradients intentionally keep the tuple-color arrowhead for a crisp terminal cue.
 function buildMarkers() {
   defs.selectAll("marker").remove();
-  const kinds = ["data", "trigger", "job", "telemetry", "code", "unknown"];
-  kinds.forEach(k => {
-    const m = defs.append("marker")
-      .attr("id", `arrow-${k}`).attr("viewBox", "0 -4 8 8").attr("refX", 7).attr("refY", 0)
+  Object.keys(TYPE_COLOR).forEach(category => {
+    const marker = defs.append("marker")
+      .attr("id", `arrow-${category}`).attr("viewBox", "0 -4 8 8").attr("refX", 7).attr("refY", 0)
       .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
       .attr("markerUnits", "userSpaceOnUse");
-    m.append("path").attr("d", "M0,-4L8,0L0,4Z")
-      .attr("fill", KIND_FILL[document.documentElement.getAttribute("data-theme") || "dark"][k]);
+    marker.append("path").attr("d", "M0,-4L8,0L0,4Z").attr("fill", typeFillOf(category));
+  });
+}
+
+function syncGradients(links) {
+  const gradientLinks = links.filter(d => tupleGradientCategories(d).length);
+  const gradientJoin = defs.selectAll("linearGradient.edge-gradient").data(gradientLinks, gradientId);
+  gradientJoin.exit().remove();
+  const gradientSel = gradientJoin.enter().append("linearGradient")
+    .attr("class", "edge-gradient").attr("gradientUnits", "objectBoundingBox")
+    .merge(gradientJoin).attr("id", gradientId);
+  gradientSel.each(function (d) {
+    const categories = tupleGradientCategories(d);
+    const stopJoin = d3.select(this).selectAll("stop").data(categories);
+    stopJoin.exit().remove();
+    stopJoin.enter().append("stop").merge(stopJoin)
+      .attr("offset", (_category, index) => `${(index / (categories.length - 1)) * 100}%`)
+      .attr("stop-color", category => typeFillOf(category));
   });
 }
 
@@ -355,6 +451,39 @@ function statusColor(d) {
   return "var(--st-idle)";
 }
 
+function nodeMatchesTags(node) {
+  if (!state.tagFilter.size) return true;
+  const tags = new Set(node.tags || []);
+  return state.tagMode === "all"
+    ? [...state.tagFilter].every(tag => tags.has(tag))
+    : [...state.tagFilter].some(tag => tags.has(tag));
+}
+
+function applyTagVisibility() {
+  if (!nodeSel || !linkSel) return;
+  const visible = new Set(nodeData.filter(nodeMatchesTags).map(d => d.id));
+  nodeSel.classed("tag-hidden", d => !visible.has(d.id));
+  linkSel.classed("tag-hidden", d => !visible.has(endpointId(d.source)) || !visible.has(endpointId(d.target)));
+  if (labelSel) labelSel.classed("tag-hidden", d => !visible.has(endpointId(d.source)) || !visible.has(endpointId(d.target)));
+}
+
+function renderTagFilters(nodes) {
+  const tags = [...new Set(nodes.flatMap(node => node.tags || []))].sort();
+  state.tagFilter = new Set([...state.tagFilter].filter(tag => tags.includes(tag)));
+  d3.select("#tag-empty").style("display", tags.length ? "none" : null);
+  const tagJoin = d3.select("#tag-options").selectAll("button.tag-option").data(tags, tag => tag);
+  tagJoin.exit().remove();
+  tagJoin.enter().append("button").attr("class", "tag-option")
+    .merge(tagJoin)
+    .text(tag => tag)
+    .classed("selected", tag => state.tagFilter.has(tag))
+    .on("click", (_event, tag) => {
+      if (state.tagFilter.has(tag)) state.tagFilter.delete(tag);
+      else state.tagFilter.add(tag);
+      update();
+    });
+}
+
 function update() {
   const data = loadData();
   // header + summary
@@ -379,20 +508,16 @@ function update() {
   });
   const nodeById = new Map(fresh.map(n => [n.id, n]));
 
+  renderTagFilters(fresh);
   const links = data.links
-    .map((l, i) => ({ ...l, _kind: payloadKind(l), _idx: i }))
-    .filter(l => {
-      if (l._kind === "telemetry" && !state.showTelemetry) return false;
-      if (l._kind === "code" && !state.showCode) return false;
-      return nodeById.has(l.source) && nodeById.has(l.target);
-    });
+    .map((l, i) => ({ ...l, _idx: i }))
+    .filter(l => nodeById.has(l.source) && nodeById.has(l.target));
 
   const newNodeIds = new Set(fresh.map(n => n.id));
   const addedNodes = [...newNodeIds].filter(id => !prevNodeIds.has(id)).length;
   const removedNodes = [...prevNodeIds].filter(id => !newNodeIds.has(id)).length;
-  const linkKey = l => `${l.source}|${l.target}|${l._kind}`;
-  const prevLinkKeys = new Set(linkData.map(linkKey));
-  const newLinkKeys = new Set(links.map(linkKey));
+  const prevLinkKeys = new Set(linkData.map(edgeKey));
+  const newLinkKeys = new Set(links.map(edgeKey));
   const addedLinks = [...newLinkKeys].filter(k => !prevLinkKeys.has(k)).length;
   const removedLinks = [...prevLinkKeys].filter(k => !newLinkKeys.has(k)).length;
   const topologyChanged = addedNodes || removedNodes || addedLinks || removedLinks;
@@ -449,32 +574,33 @@ function update() {
     .attr("x", d => nodeW(d) / 2 - 10)
     .attr("y", -15);
 
-  // --- link join (per-kind marker-end) ---
-  const linkJoin = linksG.selectAll("path.link").data(links, linkKey);
+  // --- link join (payload-type color and optional tuple gradient) ---
+  syncGradients(links);
+  const linkJoin = linksG.selectAll("path.link").data(links, edgeKey);
   linkJoin.exit().remove();
   linkSel = linkJoin.enter().append("path")
     .attr("class", "link")
     .merge(linkJoin)
-    .attr("marker-end", d => `url(#arrow-${d._kind})`)
-    .style("stroke", kindColorOf)
+    .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
+    .style("stroke", edgeStroke)
     .attr("stroke-width", 1.5)
-    .style("stroke-dasharray", d => STROKE_DASH[STROKE[d._kind]])
     .style("cursor", "pointer");
   linkSel.on("click", (e, d) => { e.stopPropagation(); renderEdgeDetails(d); });
 
-  const labelJoin = labelsG.selectAll("text.edge-label").data(links, linkKey);
+  const labelJoin = labelsG.selectAll("text.edge-label").data(links, edgeKey);
   labelJoin.exit().remove();
   labelSel = labelJoin.enter().append("text")
     .attr("class", "edge-label")
-    .text(d => d.payload || "")
-    .style("display", state.showLabels ? null : "none")
-    .merge(labelJoin);
+    .merge(labelJoin)
+    .text(edgeLabel)
+    .style("display", state.showLabels ? null : "none");
 
   sim.nodes(fresh);
   sim.force("link").links(links);
   if (topologyChanged) sim.alpha(Math.min(1, sim.alpha() + 0.3)).restart();
 
-  if (state.selected && nodeById.has(state.selected)) highlight(nodeById.get(state.selected));
+  applyTagVisibility();
+  if (state.selected && nodeById.has(state.selected) && nodeMatchesTags(nodeById.get(state.selected))) highlight(nodeById.get(state.selected));
   else { state.selected = null; clearHighlight(); }
 }
 
@@ -594,8 +720,8 @@ function fireEdge(source, target) {
       const l = d3.select(this).datum();
       d3.select(this)
         .classed("firing", false)
-        .style("stroke", l ? kindColorOf(l) : "var(--edge-data)")
-        .style("stroke-dasharray", l ? STROKE_DASH[STROKE[l._kind]] : null);
+        .style("stroke", l ? edgeStroke(l) : "var(--type-other)")
+        .style("stroke-dasharray", null);
     });
 }
 
@@ -664,8 +790,12 @@ function renderDetails(d) {
   det.append("div").attr("class", "drow").html(`<span class="k">kind</span><span class="v">${d.is_async ? "async" : "sync"}</span>`);
   const st = active.has(d.id) ? (d.is_async ? "async waiting" : "sync busy") : "idle / done";
   det.append("div").attr("class", "drow").html(`<span class="k">status</span><span class="v">${st}</span>`);
-  if (d.tags && Object.keys(d.tags).length)
-    det.append("div").attr("class", "drow").html(`<span class="k">tags</span><span class="v">${JSON.stringify(d.tags)}</span>`);
+  if (d.tags && d.tags.length) {
+    const tagRow = det.append("div").attr("class", "drow");
+    tagRow.append("span").attr("class", "k").text("tags");
+    const tagBox = tagRow.append("span").attr("class", "v");
+    tagBox.selectAll("span.tag-chip").data(d.tags).join("span").attr("class", "tag-chip").text(tag => tag);
+  }
   const inb = linkData.filter(l => (l.target.id || l.target) === d.id);
   const outb = linkData.filter(l => (l.source.id || l.source) === d.id);
   const box = det.append("div").attr("class", "edges");
@@ -684,11 +814,10 @@ function renderEdgeDetails(l) {
   det.html("");
   det.append("h2").text("Edge");
   det.append("div").attr("class", "drow").html(`<span class="k">flow</span><span class="v">${srcName} → ${tgtName}</span>`);
-  det.append("div").attr("class", "drow").html(`<span class="k">payload</span><span class="v">${l.payload || ""}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">payload</span><span class="v">${edgeLabel(l)}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">color</span><span class="v">${payloadCategory(l.payload)}</span>`);
   if (l.size != null) det.append("div").attr("class", "drow").html(`<span class="k">size</span><span class="v">${l.size}</span>`);
   det.append("div").attr("class", "drow").html(`<span class="k">count</span><span class="v">${l.count || 1}×</span>`);
-  if (l.tags && Object.keys(l.tags).length)
-    det.append("div").attr("class", "drow").html(`<span class="k">tags</span><span class="v">${JSON.stringify(l.tags)}</span>`);
   if (l.value != null) {
     det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.value);
@@ -721,19 +850,78 @@ d3.select("#b-reset").on("click", () => {
   state.selected = null; clearHighlight();
   d3.select("#details").html('<h2>Details</h2><div class="empty">Click a node or edge to inspect.</div>');
 });
-d3.select("#c-telemetry").on("change", e => { state.showTelemetry = e.target.checked; update(); });
-d3.select("#c-code").on("change", e => { state.showCode = e.target.checked; update(); });
 d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
 d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
+d3.selectAll('input[name="tag-mode"]').on("change", e => { state.tagMode = e.target.value; update(); });
+
+const main = document.getElementById("main");
+const filters = document.getElementById("filters");
+const sidebar = document.getElementById("sidebar");
+function resizeGraph() {
+  w = svg.node().clientWidth; h = svg.node().clientHeight;
+  svg.attr("viewBox", `0 0 ${w} ${h}`);
+  sim.force("center", d3.forceCenter(w / 2, h / 2));
+  sim.alpha(0.1).restart();
+}
+function setFilterCollapsed(collapsed, persist = true) {
+  main.classList.toggle("filters-collapsed", collapsed);
+  filters.classList.toggle("filter-collapsed", collapsed);
+  document.getElementById("b-filters").textContent = collapsed ? "›" : "‹";
+  if (persist) try { localStorage.setItem("pylier-filters-collapsed", String(collapsed)); } catch { /* private mode */ }
+  setTimeout(resizeGraph, 0);
+}
+function setSidebarCollapsed(collapsed, persist = true) {
+  main.classList.toggle("sidebar-collapsed", collapsed);
+  sidebar.classList.toggle("sidebar-collapsed", collapsed);
+  document.getElementById("b-sidebar").textContent = collapsed ? "‹" : "›";
+  if (persist) try { localStorage.setItem("pylier-sidebar-collapsed", String(collapsed)); } catch { /* private mode */ }
+  setTimeout(resizeGraph, 0);
+}
+function setSidebarWidth(width, persist = true) {
+  const bounded = Math.max(240, Math.min(560, width));
+  main.style.setProperty("--sidebar-w", `${bounded}px`);
+  if (persist) try { localStorage.setItem("pylier-sidebar-width", String(bounded)); } catch { /* private mode */ }
+  resizeGraph();
+}
+d3.select("#b-filters").on("click", () => setFilterCollapsed(!filters.classList.contains("filter-collapsed")));
+d3.select("#b-sidebar").on("click", () => setSidebarCollapsed(!sidebar.classList.contains("sidebar-collapsed")));
+const resizeHandle = document.getElementById("sidebar-resize");
+resizeHandle.addEventListener("pointerdown", event => {
+  event.preventDefault();
+  resizeHandle.classList.add("dragging");
+  resizeHandle.setPointerCapture(event.pointerId);
+  const move = pointerEvent => setSidebarWidth(window.innerWidth - pointerEvent.clientX, false);
+  const end = () => {
+    resizeHandle.classList.remove("dragging");
+    try { localStorage.setItem("pylier-sidebar-width", String(parseInt(getComputedStyle(main).getPropertyValue("--sidebar-w"), 10))); } catch { /* private mode */ }
+    resizeHandle.removeEventListener("pointermove", move);
+    resizeHandle.removeEventListener("pointerup", end);
+  };
+  resizeHandle.addEventListener("pointermove", move);
+  resizeHandle.addEventListener("pointerup", end);
+});
 
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
   d3.select("#b-theme").text(t === "dark" ? "☀ light" : "☾ dark");
-  buildMarkers(); // per-kind marker fills track the theme
-  // re-stroke edges so existing paths pick up the new palette
-  if (linkSel) linkSel.attr("marker-end", d => `url(#arrow-${d._kind})`);
+  buildMarkers();
+  syncGradients(linkData);
+  if (linkSel) linkSel
+    .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
+    .style("stroke", edgeStroke);
 }
 const savedTheme = (() => { try { return localStorage.getItem("pylier-theme") || "dark"; } catch { return "dark"; } })();
+const savedSidebarWidth = (() => {
+  try {
+    const stored = localStorage.getItem("pylier-sidebar-width");
+    return stored === null ? NaN : Number(stored);
+  } catch { return NaN; }
+})();
+const savedFiltersCollapsed = (() => { try { return localStorage.getItem("pylier-filters-collapsed") === "true"; } catch { return false; } })();
+const savedSidebarCollapsed = (() => { try { return localStorage.getItem("pylier-sidebar-collapsed") === "true"; } catch { return false; } })();
+if (Number.isFinite(savedSidebarWidth)) setSidebarWidth(savedSidebarWidth, false);
+setFilterCollapsed(savedFiltersCollapsed, false);
+setSidebarCollapsed(savedSidebarCollapsed, false);
 applyTheme(savedTheme);
 d3.select("#b-theme").on("click", () => {
   const cur = document.documentElement.getAttribute("data-theme") || "dark";
@@ -742,12 +930,7 @@ d3.select("#b-theme").on("click", () => {
   try { localStorage.setItem("pylier-theme", nxt); } catch { /* private mode */ }
 });
 
-window.addEventListener("resize", () => {
-  w = svg.node().clientWidth; h = svg.node().clientHeight;
-  svg.attr("viewBox", `0 0 ${w} ${h}`);
-  sim.force("center", d3.forceCenter(w / 2, h / 2));
-  sim.alpha(0.1).restart();
-});
+window.addEventListener("resize", resizeGraph);
 
 update();
 setTimeout(fit, 600);
