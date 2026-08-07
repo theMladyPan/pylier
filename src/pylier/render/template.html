@@ -318,7 +318,7 @@ const sim = d3.forceSimulation()
   .force("link", d3.forceLink().id(d => d.id).distance(240).strength(0.38))
   .force("charge", d3.forceManyBody().strength(-900).distanceMax(700))
   .force("center", d3.forceCenter(w / 2, h / 2))
-  .force("collide", d3.forceCollide().radius(d => nodeW(d) / 2 + 28).iterations(2))
+  .force("collide", d3.forceCollide().radius(d => Math.hypot(nodeW(d) / 2, NH / 2) + 28).iterations(2))
   .alphaDecay(0.025);
 
 let nodeData = [];
@@ -486,31 +486,93 @@ sim.on("tick", () => {
     .attr("y", d => linkRoute(d).y - 7);
 });
 
-// Rectilinear (orthogonal) edge routing with rounded corners. Endpoints clip
-// to the node card border (+ arrow pad on the target) so the per-kind arrowhead
-// (orient=auto) sits tangent to the border it enters. Parallel edges fan apart
-// by stable per-edge index.
+// Rectilinear routing with rounded corners and a guaranteed straight terminal
+// segment. SVG's orient=auto marker uses that final segment as its tangent, so
+// it never has to infer a direction from a tight bend. An edge keeps its initial
+// axis through force ticks; if cards get too close, it takes an outer bypass.
+const ROUTE = { sourcePad: 2, targetPad: 8, approach: 20, corner: 12, bypass: 44 };
+
+function direction(delta, fallback) {
+  return Math.sign(delta) || fallback;
+}
+
+function roundedPath(points) {
+  let path = `M${points[0].x},${points[0].y}`;
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const a = points[i - 1], b = points[i], c = points[i + 1];
+    const inX = b.x - a.x, inY = b.y - a.y;
+    const outX = c.x - b.x, outY = c.y - b.y;
+    const inLength = Math.hypot(inX, inY), outLength = Math.hypot(outX, outY);
+    const cross = inX * outY - inY * outX;
+    if (!inLength || !outLength || Math.abs(cross) < 0.01) {
+      path += `L${b.x},${b.y}`;
+      continue;
+    }
+    const radius = Math.min(ROUTE.corner, inLength / 2, outLength / 2);
+    const before = { x: b.x - (inX / inLength) * radius, y: b.y - (inY / inLength) * radius };
+    const after = { x: b.x + (outX / outLength) * radius, y: b.y + (outY / outLength) * radius };
+    path += `L${before.x},${before.y}Q${b.x},${b.y} ${after.x},${after.y}`;
+  }
+  const last = points.at(-1);
+  return `${path}L${last.x},${last.y}`;
+}
+
 function linkRoute(d) {
   const s = d.source, t = d.target;
   const sw = nodeW(s) / 2, tw = nodeW(t) / 2, hh = NH / 2;
   const dx = t.x - s.x, dy = t.y - s.y;
-  const sp = 2, ap = 8;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    const sh = Math.sign(dx) || 1, sv = Math.sign(dy) || 0;
-    const ex = s.x + sh * (sw + sp), ey = s.y, tx2 = t.x - sh * (tw + ap), ty = t.y;
-    const lo = Math.min(ex, tx2), hi = Math.max(ex, tx2), r = Math.min(14, Math.abs(ty - ey) / 2);
-    let mx = (ex + tx2) / 2 + ((d._idx % 3) - 1) * 22;
-    mx = (hi - lo > 2 * r) ? Math.max(lo + r, Math.min(hi - r, mx)) : (lo + hi) / 2;
-    if (Math.abs(dy) < 8) return { path: `M${ex},${ey}H${tx2}`, x: (ex + tx2) / 2, y: ey };
-    return { path: `M${ex},${ey}H${mx - sh * r}Q${mx},${ey} ${mx},${ey + sv * r}V${ty - sv * r}Q${mx},${ty} ${mx + sh * r},${ty}H${tx2}`, x: mx, y: (ey + ty) / 2 };
+  const sx = direction(dx, d._idx % 2 ? -1 : 1);
+  const sy = direction(dy, d._idx % 2 ? -1 : 1);
+  const hStart = { x: s.x + sx * (sw + ROUTE.sourcePad), y: s.y };
+  const hEnd = { x: t.x - sx * (tw + ROUTE.targetPad), y: t.y };
+  const vStart = { x: s.x, y: s.y + sy * (hh + ROUTE.sourcePad) };
+  const vEnd = { x: t.x, y: t.y - sy * (hh + ROUTE.targetPad) };
+  const hClearance = (hEnd.x - hStart.x) * sx;
+  const vClearance = (vEnd.y - vStart.y) * sy;
+  const turnClearance = ROUTE.approach + ROUTE.corner;
+  const minClearance = turnClearance * 2 + 4;
+  const horizontalOpen = hClearance >= minClearance;
+  const verticalOpen = vClearance >= minClearance;
+
+  // Lock the preferred axis once per simulation link. It may use the other
+  // open corridor as a safe fallback, but it does not thrash every force tick.
+  d._axis ??= Math.abs(dx) >= Math.abs(dy) ? "horizontal" : "vertical";
+  let axis = d._axis;
+  if (axis === "horizontal" && !horizontalOpen) axis = verticalOpen ? "vertical" : "bypass";
+  if (axis === "vertical" && !verticalOpen) axis = horizontalOpen ? "horizontal" : "bypass";
+
+  const offset = ((d._idx % 3) - 1) * 12;
+  if (axis === "horizontal") {
+    if (Math.abs(dy) < 4) {
+      return { path: roundedPath([hStart, hEnd]), x: (hStart.x + hEnd.x) / 2, y: hStart.y };
+    }
+    const lo = Math.min(hStart.x, hEnd.x) + turnClearance;
+    const hi = Math.max(hStart.x, hEnd.x) - turnClearance;
+    const midX = Math.max(lo, Math.min(hi, (hStart.x + hEnd.x) / 2 + offset));
+    const points = [hStart, { x: midX, y: hStart.y }, { x: midX, y: hEnd.y }, hEnd];
+    return { path: roundedPath(points), x: midX, y: (hStart.y + hEnd.y) / 2 };
   }
-  const sv = Math.sign(dy) || 1, sh = Math.sign(dx) || 0;
-  const ex = s.x, ey = s.y + sv * (hh + sp), tx2 = t.x, ty = t.y - sv * (hh + ap);
-  const lo = Math.min(ey, ty), hi = Math.max(ey, ty), r = Math.min(14, Math.abs(tx2 - ex) / 2);
-  let my = (ey + ty) / 2 + ((d._idx % 3) - 1) * 22;
-  my = (hi - lo > 2 * r) ? Math.max(lo + r, Math.min(hi - r, my)) : (lo + hi) / 2;
-  if (Math.abs(dx) < 8) return { path: `M${ex},${ey}V${ty}`, x: ex, y: (ey + ty) / 2 };
-  return { path: `M${ex},${ey}V${my - sv * r}Q${ex},${my} ${ex + sh * r},${my}H${tx2 - sh * r}Q${tx2},${my} ${tx2},${my + sv * r}V${ty}`, x: (ex + tx2) / 2, y: my };
+  if (axis === "vertical") {
+    if (Math.abs(dx) < 4) {
+      return { path: roundedPath([vStart, vEnd]), x: vStart.x, y: (vStart.y + vEnd.y) / 2 };
+    }
+    const lo = Math.min(vStart.y, vEnd.y) + turnClearance;
+    const hi = Math.max(vStart.y, vEnd.y) - turnClearance;
+    const midY = Math.max(lo, Math.min(hi, (vStart.y + vEnd.y) / 2 + offset));
+    const points = [vStart, { x: vStart.x, y: midY }, { x: vEnd.x, y: midY }, vEnd];
+    return { path: roundedPath(points), x: (vStart.x + vEnd.x) / 2, y: midY };
+  }
+
+  // Neither direct corridor has clearance. Leave both cards on the same outer
+  // side, route around their expanded bounds, then approach the target straight.
+  const side = d._idx % 2 ? -1 : 1;
+  const laneY = side > 0
+    ? Math.max(s.y + hh, t.y + hh) + ROUTE.bypass
+    : Math.min(s.y - hh, t.y - hh) - ROUTE.bypass;
+  const start = { x: s.x, y: s.y + side * (hh + ROUTE.sourcePad) };
+  const end = { x: t.x, y: t.y + side * (hh + ROUTE.targetPad) };
+  const points = [start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end];
+  return { path: roundedPath(points), x: (start.x + end.x) / 2, y: laneY };
 }
 
 // --- execution state: status stripe (enter->exit) + a restrained edge handoff ---
