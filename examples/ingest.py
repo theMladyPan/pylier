@@ -63,23 +63,31 @@ def run_pipeline(name: str) -> int:
 def main(mode: str) -> None:
     global _STEP_DELAY
     if mode == "serve":
-        # Live mode: slow each stage so the viewer can stream the graph as it
-        # grows, node-by-node, via SSE. Each iteration re-enters the trace, so
-        # repeated calls accumulate call-counts on the existing nodes and the
-        # viewer pushes every change in real time.
+        # Live mode: open ONE trace and keep it open so the viewer (which
+        # resolves the active trace at serve time) watches the same object.
+        # Each node call bumps the trace version and the SSE endpoint pushes
+        # the change, so the graph grows node-by-node in the browser. Slow
+        # each stage so the streaming is visible. Iterating re-enters nodes,
+        # so call-counts accumulate and the badge counts climb live.
         _STEP_DELAY = 0.6
-        server = pylier.serve()
-        print("viewer streaming — processing documents one at a time...")
-        try:
-            for i in range(1, 4):
-                total = run_pipeline("doc-ingest")
-                print(f"doc {i}: indexed {total} vectors")
-                time.sleep(1.0)
-            input("press enter to stop...")
-        except EOFError:
-            pass
-        finally:
-            server.shutdown()
+        with pylier.trace("doc-ingest") as tr:  # noqa: F841 (tr held for the viewer)
+            server = pylier.serve()  # picks up the active trace via _last_trace
+            print("viewer streaming — processing documents one at a time...")
+            try:
+                for i in range(1, 4):
+                    doc = load_document("report.pdf")
+                    text_chunks = extract_text(doc)
+                    image_chunks = ocr_images(doc)
+                    text_vecs = embed(text_chunks)
+                    image_vecs = embed(image_chunks)
+                    total = index(text_vecs + image_vecs)
+                    print(f"doc {i}: indexed {total} vectors")
+                    time.sleep(1.0)
+                input("press enter to stop...")
+            except EOFError:
+                pass
+            finally:
+                server.shutdown()
     elif mode == "html":
         # One-shot: no delays, single run, write a self-contained HTML file.
         _STEP_DELAY = 0.0
