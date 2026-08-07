@@ -143,18 +143,21 @@
   .node .module { font-size: 10px; fill: var(--muted); }
   .node .lat { font-size: 10px; fill: var(--ink); text-anchor: end; }
   .node .lat .avg { fill: var(--muted); }
-  .node .badge { font-size: 10px; fill: var(--muted); }
 
-  .link { fill: none; opacity: .8; }
-  .link.highlighted { opacity: 1; stroke-width: 3px; }
+  /* Match the mockup's fine-line, low-noise graph treatment. */
+  .link { fill: none; opacity: .8; stroke-width: 1.5px; }
+  .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
-  .link.firing { opacity: 1; stroke-width: 4px; filter: drop-shadow(0 0 6px var(--fire)); }
+  /* Execution feedback stays understated: a short handoff flash plus a slow
+     breathing border while a node is active. The status stripe remains primary. */
+  .link.firing { opacity: .95; stroke-width: 2px; filter: drop-shadow(0 0 2px var(--fire)); }
   .node.dimmed { opacity: .15; }
-  .node.pulsing rect.body { stroke: var(--st-busy); animation: node-pulse 0.7s ease-in-out infinite; }
-  .node.pulsing.async rect.body { stroke: var(--st-wait); }
-  @keyframes node-pulse {
-    0%, 100% { stroke-width: 1.5px; filter: drop-shadow(0 0 2px currentColor); }
-    50% { stroke-width: 3px; filter: drop-shadow(0 0 10px currentColor); }
+  .node.pulsing { --node-active: var(--st-busy); }
+  .node.pulsing.async { --node-active: var(--st-wait); }
+  .node.pulsing rect.body { animation: node-breathe 2.1s ease-in-out infinite; }
+  @keyframes node-breathe {
+    0%, 100% { stroke: var(--node-active); stroke-width: 1px; filter: drop-shadow(0 0 1px var(--node-active)); }
+    50% { stroke: var(--node-active); stroke-width: 1.4px; filter: drop-shadow(0 0 4px var(--node-active)); }
   }
   .edge-label { font-size: 9px; fill: var(--muted); pointer-events: none; text-anchor: middle; paint-order: stroke; stroke: var(--bg); stroke-width: 5px; }
 </style>
@@ -190,7 +193,7 @@
       <h2>View</h2>
       <label><input type="checkbox" id="c-telemetry" checked /> Show telemetry edges</label>
       <label><input type="checkbox" id="c-code" checked /> Show code-dep edges</label>
-      <label><input type="checkbox" id="c-labels" /> Show edge labels</label>
+      <label><input type="checkbox" id="c-labels" checked /> Show edge labels</label>
       <label><input type="checkbox" id="c-anim" checked /> Animate execution</label>
       <div class="btns">
         <button id="b-fit">Fit view</button>
@@ -235,7 +238,7 @@ function kindFillOf(d) {
 
 // node card geometry: width grows with the longer of name/module (+ room for
 // the right-aligned latency). Hoisted so collide force + edge router share it.
-const NH = 64;
+const NH = 66;
 function nodeW(d) {
   const longest = Math.max((d.name || "").length, (d.category || "").length);
   return Math.max(176, longest * 7.2 + 56);
@@ -274,7 +277,7 @@ if (LIVE) {
   es.onerror = () => { es.close(); };
 }
 
-let state = { showTelemetry: true, showCode: true, showLabels: false, animate: true, selected: null };
+let state = { showTelemetry: true, showCode: true, showLabels: true, animate: true, selected: null };
 // nodes currently executing (enter seen, exit not) — drives the status stripe
 const active = new Set();
 
@@ -408,28 +411,30 @@ function update() {
       .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
   nodeEnter.append("rect").attr("class", "body").attr("rx", 3).attr("ry", 3).attr("height", NH).attr("y", -NH / 2);
   nodeEnter.append("rect").attr("class", "status").attr("x", d => -nodeW(d) / 2).attr("y", -NH / 2).attr("width", 5).attr("height", NH).attr("fill", statusColor);
-  nodeEnter.append("text").attr("class", "num").attr("y", -18);
-  nodeEnter.append("text").attr("class", "name").attr("y", -1);
-  nodeEnter.append("text").attr("class", "module").attr("y", 15);
-  nodeEnter.append("text").attr("class", "lat").attr("y", -18);
-  nodeEnter.append("text").attr("class", "badge").attr("y", 15);
+  nodeEnter.append("text").attr("class", "num").attr("y", -15);
+  nodeEnter.append("text").attr("class", "name").attr("y", 3);
+  nodeEnter.append("text").attr("class", "module").attr("y", 21);
+  nodeEnter.append("text").attr("class", "lat").attr("y", -15);
   nodeEnter.on("click", (e, d) => { state.selected = d.id; highlight(d); renderDetails(d); });
 
   nodeSel = nodeJoin.merge(nodeEnter);
-  nodeSel.attr("class", d => "node" + (d.is_async ? " async" : "") + (active.has(d.id) ? " pulsing" : "") + (d.is_async && active.has(d.id) ? " async" : ""));
+  nodeSel.attr("class", d => "node" + (d.is_async ? " async" : "") + (active.has(d.id) ? " pulsing" : ""));
   nodeSel.select("rect.body").attr("width", nodeW).attr("x", d => -nodeW(d) / 2);
   nodeSel.select("rect.status")
     .attr("x", d => -nodeW(d) / 2).attr("height", NH).attr("y", -NH / 2)
     .attr("fill", statusColor);
   nodeSel.select("text.num")
     .text((d, i) => String(i + 1).padStart(2, "0"))
-    .attr("x", d => -nodeW(d) / 2 + 14);
+    .attr("x", d => -nodeW(d) / 2 + 13)
+    .attr("y", -15);
   nodeSel.select("text.name")
     .text(d => d.name)
-    .attr("x", d => -nodeW(d) / 2 + 14);
+    .attr("x", d => -nodeW(d) / 2 + 13)
+    .attr("y", 3);
   nodeSel.select("text.module")
     .text(d => d.module || d.category || "")
-    .attr("x", d => -nodeW(d) / 2 + 14);
+    .attr("x", d => -nodeW(d) / 2 + 13)
+    .attr("y", 21);
   nodeSel.select("text.lat")
     .each(function (d) {
       const sel = d3.select(this);
@@ -441,10 +446,8 @@ function update() {
         if (avg != null && avg !== last) sel.append("tspan").attr("class", "avg").text(` [${avg}]`);
       }
     })
-    .attr("x", d => nodeW(d) / 2 - 10);
-  nodeSel.select("text.badge")
-    .text(d => `${d.calls || 0}×`)
-    .attr("x", d => nodeW(d) / 2 - 10);
+    .attr("x", d => nodeW(d) / 2 - 10)
+    .attr("y", -15);
 
   // --- link join (per-kind marker-end) ---
   const linkJoin = linksG.selectAll("path.link").data(links, linkKey);
@@ -454,7 +457,7 @@ function update() {
     .merge(linkJoin)
     .attr("marker-end", d => `url(#arrow-${d._kind})`)
     .style("stroke", kindColorOf)
-    .attr("stroke-width", d => 1.5 + Math.min(3, (d.count || 1) * 0.4))
+    .attr("stroke-width", 1.5)
     .style("stroke-dasharray", d => STROKE_DASH[STROKE[d._kind]])
     .style("cursor", "pointer");
   linkSel.on("click", (e, d) => { e.stopPropagation(); renderEdgeDetails(d); });
@@ -510,14 +513,12 @@ function linkRoute(d) {
   return { path: `M${ex},${ey}V${my - sv * r}Q${ex},${my} ${ex + sh * r},${my}H${tx2 - sh * r}Q${tx2},${my} ${tx2},${my + sv * r}V${ty}`, x: (ex + tx2) / 2, y: my };
 }
 
-// --- execution animation: node pulse (enter->exit) + edge fire (handoff) ---
+// --- execution state: status stripe (enter->exit) + a restrained edge handoff ---
 function nodeByIdNow(id) { return nodeData.find(n => n.id === id) || null; }
 
 function bumpCalls(id) {
   const n = nodeByIdNow(id);
-  if (!n) return;
-  n.calls = (n.calls || 0) + 1;
-  if (nodeSel) nodeSel.filter(d => d.id === id).select("text.badge").text(d => `${d.calls || 0}×`);
+  if (n) n.calls = (n.calls || 0) + 1;
 }
 
 function fireEdge(source, target) {
@@ -526,7 +527,7 @@ function fireEdge(source, target) {
   s.classed("firing", true)
     .style("stroke", "var(--fire)")
     .style("stroke-dasharray", null)
-    .transition().duration(650).ease(d3.easeCubicOut)
+    .transition().duration(280).ease(d3.easeCubicOut)
     .on("end", function () {
       const l = d3.select(this).datum();
       d3.select(this)
