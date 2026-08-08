@@ -23,6 +23,8 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import cast, overload
 
@@ -63,7 +65,13 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "1.1.0"
+# Single source of truth is [project].version in pyproject.toml; the CI
+# pipeline (uv version, uv publish) reads it from there. Derive at runtime so
+# the two never drift — no manual sync on version bumps.
+try:
+    __version__ = _pkg_version("pylier")
+except PackageNotFoundError:  # running from a source tree that isn't installed
+    __version__ = "0.0.0"
 
 
 def derive[T](value: T, *, from_: Iterable[object]) -> T:
