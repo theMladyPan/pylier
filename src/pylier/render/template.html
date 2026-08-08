@@ -491,7 +491,13 @@ function formatSseTime(date) {
 }
 
 function summarizeSseEvent(kind, payload) {
-  if (kind === "graph") return `${payload.nodes?.length || 0} nodes · ${payload.links?.length || 0} handoffs`;
+  if (kind === "graph") {
+    const traces = Array.isArray(payload.traces) ? payload.traces : [payload];
+    const nodes = traces.reduce((total, trace) => total + (trace.nodes?.length || 0), 0);
+    const handoffs = traces.reduce((total, trace) => total + (trace.links?.length || 0), 0);
+    const prefix = Array.isArray(payload.traces) ? `${traces.length} trace${traces.length === 1 ? "" : "s"} · ` : "";
+    return `${prefix}${nodes} nodes · ${handoffs} handoffs`;
+  }
   const events = Array.isArray(payload) ? payload : [];
   const names = events.slice(0, 3).map(event => `${event.kind}:${String(event.node_id || "unknown").split(".").at(-1)}`).join(", ");
   return `${events.length} execution event${events.length === 1 ? "" : "s"}${names ? ` · ${names}` : ""}`;
