@@ -18,20 +18,6 @@
   <img src="https://img.shields.io/badge/tracing%20framework-none-2ea44f" alt="No tracing framework">
 </p>
 
-```python
-import pylier
-
-
-@pylier.node
-def embed(chunks: list[str]) -> list[dict]: ...
-
-
-with pylier.trace("ingest"):
-    embed(load("report.pdf"))
-
-pylier.serve()  # live viewer at http://localhost:8765
-```
-
 </div>
 
 <table>
@@ -110,6 +96,23 @@ one.
 - [Fulfillment workflow demo](https://theMladyPan.github.io/pylier/fulfillment.html)
 
 ## Quick start: document ingestion
+
+
+```python
+#! uv add pylier
+import pylier
+
+
+@pylier.node
+def embed(chunks: list[str]) -> list[dict]: ...
+
+
+with pylier.trace("ingest"):
+    embed(load("report.pdf"))
+
+pylier.serve()  # live viewer at http://localhost:8765
+```
+
 
 The [ingestion example](https://theMladyPan.github.io/pylier/ingest.html) is the fastest way to see pylier's
 value: a document branches into text and image paths, then concurrently embeds
