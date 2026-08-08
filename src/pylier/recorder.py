@@ -253,7 +253,7 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
                 metadata={"phase": "arguments"},
             )
             fired.append({"source": source_id, "target": meta.id})
-    if not fired and caller_id is not None and caller_id != meta.id:
+    if not fired and caller_id is not None and caller_id != meta.id and (args or kwargs or caller_stack):
         arguments = {"args": args, "kwargs": kwargs}
         trace.add_edge(
             caller_id,
