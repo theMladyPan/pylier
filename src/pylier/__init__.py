@@ -165,6 +165,7 @@ def trace(name: str = "trace", *, sidecar: bool | str | Path = False):
     try:
         yield t
     finally:
+        t.finish()
         reset_trace(token)
 
 

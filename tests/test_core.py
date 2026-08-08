@@ -419,9 +419,9 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "duration(1000)" in html
     assert ".velocityDecay(0.55)" in html
     assert "sim.alpha(prevNodeIds.size ? 0.12 : 0.65).restart()" in html
-    assert "trace-start" in html
-    assert "traceStartNode" in html
-    assert "nodes.find(node => node.is_root)" in html
+    assert 'attr("class", "boundary-port")' in html
+    assert "BOUNDARY_RADIUS = NH / 2" in html
+    assert "renderTraceBoundaryDetails" in html
     assert "Selectors" in html
     assert "Traces" in html
     assert "Filters" in html
@@ -745,6 +745,30 @@ def test_sse_latency_update_does_not_emit_empty_exec_batches():
         connection.close()
         server.shutdown()
         server.server_close()
+
+
+def test_trace_serializes_generic_metadata_and_lifecycle():
+    """Trace facts are generic and lifecycle times bracket a managed block."""
+    with pylier.trace("lifecycle") as trace:
+        assert trace.ended_at is None
+        trace.metadata["origin"] = "test"
+
+    graph = trace.to_graph_dict()
+    assert graph["metadata"] == {"origin": "test"}
+    assert graph["started_at"] <= graph["ended_at"]
+    assert "endpoint" not in graph
+
+
+def test_render_template_uses_boundary_port_without_workspace_tabs():
+    """The renderer keeps trace boundaries distinct from algorithm node cards."""
+    html = pylier.build_html(Trace("boundary"))
+
+    assert 'id="endpoint-bar"' not in html
+    assert 'attr("class", "boundary-port")' in html
+    assert "BOUNDARY_RADIUS = NH / 2" in html
+    assert "Object.entries(metadata)" in html
+    assert "metadata?.status_code" not in html
+    assert "updateStartMarker" not in html
 
 
 def test_versions_split_topology_vs_execution():

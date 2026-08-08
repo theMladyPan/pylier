@@ -127,8 +127,13 @@ class Trace:
     def __init__(self, name: str = "trace") -> None:
         self.id = uuid4().hex
         self.name = name
+        # Trace facts belong to the run itself, while integration-specific facts
+        # live in this neutral bag. The FastAPI adapter currently writes a
+        # status_code, but core must not impose an HTTP endpoint shape.
+        self.metadata: dict[str, str | int | float | bool | None] = {}
+        self.started_at = time()
+        self.ended_at: float | None = None
         self.root: dict[str, str | int | None] | None = None
-        self.endpoint: dict[str, str | int | None] = {"name": name, "status_code": None}
         self.root_node_id = f"trace.{self.id}"
         self._root_node = Node(
             id=self.root_node_id,
@@ -174,6 +179,16 @@ class Trace:
         self.exec_version: int = 0
         self._cond = threading.Condition()
         self._listeners: list[Callable[[Trace], None]] = []
+
+    def finish(self) -> None:
+        """Record the managed trace's end time exactly once.
+
+        A default trace is intentionally open-ended; :func:`pylier.trace`
+        calls this method when its context exits.
+        """
+        with self._cond:
+            if self.ended_at is None:
+                self.ended_at = time()
 
     def create_invocation(
         self, invocation_id: str, node_id: str, parent_invocation_id: str | None, arguments: list[str]
@@ -496,8 +511,10 @@ class Trace:
             return {
                 "id": self.id,
                 "name": self.name,
+                "started_at": self.started_at,
+                "ended_at": self.ended_at,
+                "metadata": self.metadata,
                 "root": self.root,
-                "endpoint": self.endpoint,
                 "nodes": [
                     {
                         "id": n.id,

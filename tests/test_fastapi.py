@@ -45,8 +45,9 @@ def test_instrument_fastapi_opens_one_trace_per_request():
     # as "...<locals>.upper" — match by suffix.
     alice = next(t for t in traces if t.name == "GET /echo/alice")
     assert any(n.name.endswith(".upper") or n.name == "upper" for n in alice.nodes.values())
-    # Middleware stamped the response status onto the trace endpoint field.
-    assert alice.endpoint["status_code"] == 200
+    # The adapter owns this transport-specific key; the core metadata bag is
+    # intentionally generic for every kind of trace.
+    assert alice.metadata["status_code"] == 200
 
 
 def test_instrument_fastapi_returns_app_for_chaining():
