@@ -102,16 +102,34 @@ tooling without an explicit decision.
 
 ### Flat top-level API
 - `@pylier.node`, `pylier.trace()`, `pylier.render()`, `pylier.serve()`,
-  `pylier.set_level()`. No `Tracer()` instances.
+  `pylier.set_level()`, `pylier.instrument_fastapi()`. No `Tracer()` instances.
 - **Why:** mirrors logfire's flat, decoration-first feel. Multiple independent
   tracers (class-based) were rejected for v0.1 as extra boilerplate; revisit
   only if real multi-tracer needs appear before publishing.
+- `instrument_fastapi` is lazy: importing `pylier` never pulls in FastAPI. It
+  delegates to the `pylier.integrations.fastapi` module, which lives behind the
+  `[fastapi]` extra (`uv add pylier[fastapi]`).
 
 ### Sync + async now, personal lib, publishable later
 - `@node` auto-detects coroutine functions and wraps them correctly.
 - **Why:** async pipelines (e.g. uploaded-doc processing) are common; deferring
   async would force a rewrite. Packaging stays light (src layout, hatchling,
   pydantic-settings) so publishing later is a flip, not a migration.
+
+### Framework integrations are self-contained adapters, behind extras
+- `pylier.instrument_fastapi(app)` installs a **pure-ASGI middleware** that opens
+  one `pylier.trace("<method> <path>")` per HTTP request and stamps the response
+  status onto `Trace.endpoint["status_code"]`. It touches only the public
+  `pylier.trace` surface and the existing endpoint field — no recorder/model
+  edits. Endpoints stay un-decorated; decorate the service functions called from
+  a handler and they appear in that request's graph.
+- **Why:** keeps the core dependency-free and the adapter replaceable. A manual
+  edge API or route-mutation (wrapping `APIRoute.endpoint`) was rejected for v1
+  as version-fragile; the middleware alone gives the logfire "just decorate"
+  feel and the per-request history in the live viewer (capped at 100 by
+  `TraceHistory`). Non-HTTP scopes (lifespan, websocket) pass through untraced.
+- Fast-forward only on request: richer capture (request/response payloads as
+  edge metadata, auto-wrapping endpoints as nodes) is a deliberate v1 omission.
 
 ## Rules for this file
 - if anything changes you are obligated to edit the paragraph/section so it match the implementation (prevent stale information at all costs)
@@ -130,8 +148,12 @@ src/pylier/
   render/
     template.html # THE renderer (D3 v7). Placeholders consumed by html.py
     html.py       # injects graph JSON into template; build_html / render_to_file
+  integrations/
+    __init__.py    # lazy-imported framework adapters; never imported by `import pylier`
+    fastapi.py     # `pylier.instrument_fastapi`: pure-ASGI per-request trace middleware
   server.py       # stdlib threaded viewer: GET / (html) + GET /graph (json)
 tests/test_core.py
+tests/test_fastapi.py
 examples/ingest.py
 examples/pseudo.py  # canonical nested-handoff example
 ```

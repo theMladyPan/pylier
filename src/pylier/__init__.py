@@ -55,6 +55,7 @@ __all__ = [
     "set_level",
     "build_html",
     "render_to_file",
+    "instrument_fastapi",
     "Level",
     "Trace",
     "TraceHistory",
@@ -207,6 +208,26 @@ def set_level(level: Level | str) -> AbstractContextManager[None]:
 
 # keep `level` as an alias users may find more natural
 level = set_level
+
+
+def instrument_fastapi(app: object) -> object:
+    """Install per-request pylier tracing on a FastAPI/Starlette app.
+
+    Lazy-imports ``pylier.integrations.fastapi`` so importing ``pylier`` never
+    pulls in FastAPI. The integration lives behind the ``[fastapi]`` extra.
+
+    Args:
+        app: A FastAPI or Starlette application.
+
+    Returns:
+        The same ``app`` (the middleware is registered in place).
+
+    Raises:
+        ImportError: If FastAPI is not installed (``uv add pylier[fastapi]``).
+    """
+    from pylier.integrations.fastapi import instrument_fastapi as _impl
+
+    return _impl(app)
 
 
 def _attach_sidecar(t: Trace, sidecar: bool | str | Path) -> None:
