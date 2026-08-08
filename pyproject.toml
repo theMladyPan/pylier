@@ -21,14 +21,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
 ]
-examples = [
-    "fastapi>=0.141.1",
-    "opentelemetry-api>=1.44.0",
-    "opentelemetry-instrumentation-fastapi>=0.65b0",
-    "opentelemetry-instrumentation-sqlite3>=0.65b0",
-    "opentelemetry-sdk>=1.44.0",
-    "uvicorn>=0.52.1",
-]
+examples = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

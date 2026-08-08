@@ -52,8 +52,7 @@ T = TypeVar("T")
 
 _active_trace: contextvars.ContextVar[Trace | None] = contextvars.ContextVar("pylier_active_trace", default=None)
 _level_override: contextvars.ContextVar[Level | None] = contextvars.ContextVar("pylier_level_override", default=None)
-# Execution scope is distinct from fingerprint-derived data lineage. It only
-# produces call/return UI relations and gives imported OTel spans a caller.
+# Execution scope identifies where entry arguments and exit values hand off.
 _execution_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar("pylier_execution_stack", default=())
 
 _default_trace: Trace | None = None
@@ -234,11 +233,7 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
     """
     trace.get_or_create_node(_make_node(meta))
     caller_stack = _execution_stack.get()
-    if trace.root_node_id is not None:
-        if caller_stack:
-            trace.add_relation(caller_stack[-1], meta.id, "call")
-        else:
-            trace.link_request_root(meta.id)
+    caller_id = caller_stack[-1] if caller_stack else trace.root_node_id
     execution_token = _execution_stack.set((*caller_stack, meta.id))
     level = current_level()
     capture = _capture_values_enabled()
@@ -255,8 +250,21 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
                 preview=preview_of(arg) if level >= Level.DEBUG else None,
                 payload_types=tuple_member_type_names(arg),
                 value=serialize_value(arg) if capture else None,
+                metadata={"phase": "arguments"},
             )
             fired.append({"source": source_id, "target": meta.id})
+    if not fired and caller_id is not None and caller_id != meta.id:
+        arguments = {"args": args, "kwargs": kwargs}
+        trace.add_edge(
+            caller_id,
+            meta.id,
+            payload_type="empty" if not args and not kwargs else "arguments",
+            size=size_of(arguments) if level >= Level.INFO else None,
+            preview=preview_of(arguments) if level >= Level.DEBUG else None,
+            value=serialize_value(arguments) if capture else None,
+            metadata={"phase": "arguments"},
+        )
+        fired.append({"source": caller_id, "target": meta.id})
     trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="enter", edges=fired))
     return execution_token
 
@@ -272,23 +280,22 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
     caller_stack = _execution_stack.get()
     return_target = caller_stack[-2] if len(caller_stack) > 1 else trace.root_node_id
     if exc is not None:
-        if trace.root_node_id is not None and return_target is not None and return_target != meta.id:
-            trace.add_relation(meta.id, return_target, "return", metadata={"outcome": "exception"})
+        if return_target is not None and return_target != meta.id:
+            trace.add_edge(meta.id, return_target, payload_type="exception", metadata={"phase": "exception"})
         trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="exit"))
         _emit(trace, meta, result=None, return_type=None)
         return
     return_type = type_name(result)
-    if trace.root_node_id is not None and return_target is not None and return_target != meta.id:
+    if return_target is not None and return_target != meta.id:
         level = current_level()
-        trace.add_relation(
+        trace.add_edge(
             meta.id,
             return_target,
-            "return",
-            payload_type=return_type,
+            payload_type="empty" if result is None else return_type,
             size=size_of(result) if level >= Level.INFO else None,
             preview=preview_of(result) if level >= Level.DEBUG else None,
             value=serialize_value(result) if _capture_values_enabled() else None,
-            metadata={"outcome": "return"},
+            metadata={"phase": "return"},
         )
     fp = fingerprint(result)
     trace.register_return(fp, meta.id)
@@ -303,7 +310,7 @@ def _emit(trace: Trace, meta: NodeMeta, result: Any, return_type: str | None) ->
     level = current_level()
     # Emit a compact, replayable event: the node and every edge into it.
     edges_out: list[dict[str, Any]] = []
-    for (_src, tgt, _kind), edge in trace.edges.items():
+    for (_src, tgt), edge in trace.edges.items():
         if tgt == meta.id:
             edges_out.append(_edge_dict(edge))
     event = {
@@ -333,27 +340,8 @@ def _edge_dict(edge: Edge) -> dict[str, Any]:
         "payload_types": list(edge.payload_types),
         "count": edge.count,
         "value": edge.value,
-        "kind": edge.kind,
         "metadata": edge.metadata,
     }
-
-
-@contextlib.contextmanager
-def _otel_node_span(trace: Trace, meta: NodeMeta):
-    """Create a child OTel span only inside an existing valid OTel context."""
-    try:
-        from opentelemetry import trace as otel_trace
-    except ImportError:
-        yield
-        return
-    if not otel_trace.get_current_span().get_span_context().is_valid:
-        yield
-        return
-    with otel_trace.get_tracer("pylier").start_as_current_span(f"pylier.{meta.name}") as span:
-        context = span.get_span_context()
-        trace.map_otel_span(f"{context.trace_id:032x}", f"{context.span_id:016x}", meta.id)
-        span.set_attribute("pylier.node.id", meta.id)
-        yield
 
 
 def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: dict) -> T:
@@ -366,9 +354,8 @@ def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: 
     result: Any = None
     exc: BaseException | None = None
     try:
-        with _otel_node_span(trace, meta):
-            result = func(*args, **kwargs)
-            return result  # type: ignore[return-value]
+        result = func(*args, **kwargs)
+        return result  # type: ignore[return-value]
     except BaseException as caught:
         exc = caught
         raise
@@ -387,9 +374,8 @@ async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]]
     result: Any = None
     exc: BaseException | None = None
     try:
-        with _otel_node_span(trace, meta):
-            result = await func(*args, **kwargs)
-            return result  # type: ignore[return-value]
+        result = await func(*args, **kwargs)
+        return result  # type: ignore[return-value]
     except BaseException as caught:
         exc = caught
         raise

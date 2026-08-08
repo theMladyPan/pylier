@@ -10,7 +10,7 @@ def f1():  # no attributes
 
 @pylier.node  # auto instrument
 def f2(a: int, b: str) -> str:  # with attributes
-    f1()
+    f1()  # this is nested node, so it will be a child of f2 in the graph, the return arrow of f1 will point back to f2
     return f"{a} {b}"
 
 

@@ -46,9 +46,10 @@ class Node:
     is_async: bool = False
     last_ms: float | None = None
     avg_ms: float | None = None
+    is_root: bool = False
+    # Compatibility field for older renderer payloads; core nodes are pylier nodes.
     kind: str = "pylier"
     is_start: bool = False
-    # Raw imported OpenTelemetry span payload. Decorator nodes leave this empty.
     otel: dict = field(default_factory=dict)
 
 
@@ -68,10 +69,8 @@ class Edge:
     # full serialized payload — only populated when capture_values is on;
     # binary payloads are truncated to a summary (see fingerprint.serialize_value)
     value: str | None = None
-    # ``control`` links external request roots to captured algorithms. Data
-    # handoffs remain the default and are still inferred by fingerprinting.
+    # Entry/exit provenance is display metadata; every edge remains a handoff.
     kind: str = "data"
-    # Relation-specific debugger data, e.g. an imported OTel parent span ID.
     metadata: dict = field(default_factory=dict)
 
 
@@ -106,13 +105,22 @@ class Trace:
         self.name = name
         self.root: dict[str, str | int | None] | None = None
         self.endpoint: dict[str, str | int | None] = {"name": name, "status_code": None}
-        self.root_node_id: str | None = None
+        self.root_node_id = f"trace.{self.id}"
+        self._root_node = Node(
+            id=self.root_node_id,
+            name=name,
+            module="trace",
+            level=Level.CORE,
+            calls=1,
+            is_root=True,
+            is_start=True,
+        )
+        # Keep this collection decorator-only for backwards-compatible SDK
+        # inspection; serialization prepends the visual trace root.
         self.nodes: OrderedDict[str, Node] = OrderedDict()
-        # A pair of operations can have data, call, OTel-parent, and return
-        # relations simultaneously, so the relation kind is part of identity.
-        self.edges: OrderedDict[tuple[str, str, str], Edge] = OrderedDict()
-        self._otel_span_nodes: dict[str, str] = {}
-        self._otel_trace_ids: set[str] = set()
+        # One directed pair represents one handoff stream. Entry and exit use
+        # opposite directions, so no relation kind is necessary.
+        self.edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
         self.events: list[Event] = []
         # event sinks (e.g. SidecarBackend) notified after each resolved event.
         # Typed loosely to keep this module free of tracing-layer imports.
@@ -285,11 +293,10 @@ class Trace:
         preview: str | None = None,
         payload_types: tuple[str, ...] = (),
         value: str | None = None,
-        kind: str = "data",
         metadata: dict | None = None,
     ) -> Edge:
         with self._cond:
-            key = (source, target, kind)
+            key = (source, target)
             edge = self.edges.get(key)
             if edge is None:
                 edge = Edge(
@@ -300,7 +307,6 @@ class Trace:
                     preview=preview,
                     payload_types=payload_types,
                     value=value,
-                    kind=kind,
                     metadata=metadata or {},
                 )
                 self.edges[key] = edge
@@ -465,7 +471,8 @@ class Trace:
         get a consistent snapshot even while the recorder is mutating nodes/edges.
         """
         with self._cond:
-            categories = sorted({n.module for n in self.nodes.values()})
+            graph_nodes = (self._root_node, *self.nodes.values())
+            categories = sorted({n.module for n in graph_nodes})
             data_types = sorted({e.payload_type for e in self.edges.values()})
             return {
                 "id": self.id,
@@ -485,9 +492,9 @@ class Trace:
                         "avg_ms": n.avg_ms,
                         "kind": n.kind,
                         "is_start": n.is_start,
-                        "otel": n.otel,
+                        "is_root": n.is_root,
                     }
-                    for n in self.nodes.values()
+                    for n in graph_nodes
                 ],
                 "links": [
                     {
@@ -507,7 +514,7 @@ class Trace:
                 # execution timeline: drives the fire/pulse animation. Static
                 # renders replay this once on load; the live viewer receives the
                 # same events incrementally via SSE.
-                "total_ms": sum(n.last_ms or 0 for n in self.nodes.values()),
+                "total_ms": sum(n.last_ms or 0 for n in graph_nodes),
                 "handoffs": sum(e.count for e in self.edges.values()),
                 "events": [
                     {

@@ -56,8 +56,6 @@ __all__ = [
     "Node",
     "Edge",
     "Event",
-    "instrument_fastapi",
-    "instrument_otel",
     "__version__",
 ]
 
@@ -160,33 +158,6 @@ def set_level(level: Level | str):
 
 # keep `level` as an alias users may find more natural
 level = set_level
-
-
-def instrument_otel(*, provider: Any | None = None):
-    """Attach pylier's universal in-process OpenTelemetry span bridge.
-
-    Args:
-        provider: Optional OpenTelemetry SDK tracer provider. The configured
-            global provider is used when omitted.
-    """
-    from pylier.tracing.otel import instrument_otel as _instrument_otel
-
-    return _instrument_otel(provider=provider)
-
-
-def instrument_fastapi(app: Any) -> None:
-    """Attach pylier request capture to an OTel-instrumented FastAPI app.
-
-    The application's OpenTelemetry middleware must be outermost so its server
-    span is current when pylier handles the request. No FastAPI or OTel package
-    is imported until this function is called.
-
-    Args:
-        app: A FastAPI application exposing ``add_middleware``.
-    """
-    from pylier.integrations.fastapi import instrument_fastapi as _instrument_fastapi
-
-    _instrument_fastapi(app)
 
 
 def _attach_sidecar(t: Trace, sidecar: bool | str | Path) -> None:
