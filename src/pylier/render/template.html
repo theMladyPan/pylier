@@ -218,8 +218,9 @@
 
   /* Match the mockup's fine-line, low-noise graph treatment. */
   .link { fill: none; opacity: .8; stroke-width: 1.5px; }
-  .link.call { stroke: var(--accent) !important; }.link.otel_parent { stroke: var(--type-tuple) !important; }
-  .link.return { stroke: var(--type-dict) !important; stroke-dasharray: 7 6; opacity: .8; }
+  /* Handoff phase changes lane/style, never its payload-type color. */
+  .link.return { stroke-dasharray: 7 6; opacity: .8; }
+  .link.exception { stroke: #f85149 !important; stroke-dasharray: 1 5; stroke-linecap: round; opacity: .95; }
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
   .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden, .trace-start.tag-hidden { display: none; }
@@ -565,6 +566,11 @@ function buildMarkers() {
       .attr("markerUnits", "userSpaceOnUse");
     marker.append("path").attr("d", "M0,-4L8,0L0,4Z").attr("fill", typeFillOf(category));
   });
+  const exception = defs.append("marker")
+    .attr("id", "arrow-exception").attr("viewBox", "0 -4 8 8").attr("refX", 7).attr("refY", 0)
+    .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
+    .attr("markerUnits", "userSpaceOnUse");
+  exception.append("path").attr("d", "M0,-4L8,0L0,4Z").attr("fill", "#f85149");
 }
 
 function syncGradients(links) {
@@ -791,8 +797,8 @@ function update() {
   linkSel = linkJoin.enter().append("path")
     .attr("class", "link")
     .merge(linkJoin)
-    .attr("class", "link")
-    .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
+    .attr("class", d => `link ${d.metadata?.phase || "handoff"}`)
+    .attr("marker-end", d => `url(#arrow-${d.metadata?.phase === "exception" ? "exception" : payloadCategory(d.payload)})`)
     .style("stroke", edgeStroke)
     .attr("stroke-width", 1.5)
     .style("cursor", "pointer");
@@ -816,22 +822,7 @@ function update() {
 }
 
 function edgeRoute(d) {
-  return d.metadata?.phase === "return" ? returnRoute(d) : (state.edgeMode === "direct" ? directRoute(d) : linkRoute(d));
-}
-
-// Return edges deliberately take a curved outer lane. They are execution
-// completion, not another forward payload path, so overlapping call edges
-// would erase their meaning.
-function returnRoute(d) {
-  const s = d.source, t = d.target;
-  const dx = t.x - s.x, dy = t.y - s.y, length = Math.hypot(dx, dy) || 1;
-  const start = directCardPoint(s, dx, dy, ROUTE.sourcePad);
-  const end = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
-  const lane = 48 + (d._idx % 3) * 18;
-  const nx = (-dy / length) * lane, ny = (dx / length) * lane;
-  const c1 = { x: start.x + dx * .28 + nx, y: start.y + dy * .28 + ny };
-  const c2 = { x: start.x + dx * .72 + nx, y: start.y + dy * .72 + ny };
-  return { path: `M${start.x},${start.y}C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`, x: (c1.x + c2.x) / 2, y: (c1.y + c2.y) / 2 };
+  return state.edgeMode === "direct" ? directRoute(d) : linkRoute(d);
 }
 
 function redrawEdges() {
@@ -885,11 +876,17 @@ function directCardPoint(node, dx, dy, pad) {
 
 function directRoute(d) {
   const s = d.source, t = d.target;
-  const dx = t.x - s.x, dy = t.y - s.y;
-  if (Math.hypot(dx, dy) < 0.001) return { path: `M${s.x},${s.y}L${t.x},${t.y}`, x: s.x, y: s.y };
+  const dx = t.x - s.x, dy = t.y - s.y, length = Math.hypot(dx, dy);
+  if (length < 0.001) return { path: `M${s.x},${s.y}L${t.x},${t.y}`, x: s.x, y: s.y };
   const start = directCardPoint(s, dx, dy, ROUTE.sourcePad);
   const end = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
-  return { path: `M${start.x},${start.y}L${end.x},${end.y}`, x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  // Each handoff travels on its left rail. Reversing direction naturally puts
+  // a return on the caller's right rail without unstable pairwise forces.
+  const lane = Math.min(18, Math.max(8, length * .08));
+  const nx = (-dy / length) * lane, ny = (dx / length) * lane;
+  const c1 = { x: start.x + dx * .30 + nx, y: start.y + dy * .30 + ny };
+  const c2 = { x: start.x + dx * .70 + nx, y: start.y + dy * .70 + ny };
+  return { path: `M${start.x},${start.y}C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`, x: (c1.x + c2.x) / 2, y: (c1.y + c2.y) / 2 };
 }
 
 function linkRoute(d) {
@@ -898,10 +895,15 @@ function linkRoute(d) {
   const dx = t.x - s.x, dy = t.y - s.y;
   const sx = direction(dx, d._idx % 2 ? -1 : 1);
   const sy = direction(dy, d._idx % 2 ? -1 : 1);
-  const hStart = { x: s.x + sx * (sw + ROUTE.sourcePad), y: s.y };
-  const hEnd = { x: t.x - sx * (tw + ROUTE.targetPad), y: t.y };
-  const vStart = { x: s.x, y: s.y + sy * (hh + ROUTE.sourcePad) };
-  const vEnd = { x: t.x, y: t.y - sy * (hh + ROUTE.targetPad) };
+  // A direction-relative rail makes reciprocal entry/return handoffs run on
+  // opposite physical sides while preserving the selected orthogonal mode.
+  const lane = 12;
+  const hLane = sx * lane;
+  const vLane = -sy * lane;
+  const hStart = { x: s.x + sx * (sw + ROUTE.sourcePad), y: s.y + hLane };
+  const hEnd = { x: t.x - sx * (tw + ROUTE.targetPad), y: t.y + hLane };
+  const vStart = { x: s.x + vLane, y: s.y + sy * (hh + ROUTE.sourcePad) };
+  const vEnd = { x: t.x + vLane, y: t.y - sy * (hh + ROUTE.targetPad) };
   const hClearance = (hEnd.x - hStart.x) * sx;
   const vClearance = (vEnd.y - vStart.y) * sy;
   const turnClearance = ROUTE.approach + ROUTE.corner;
@@ -1193,7 +1195,7 @@ function applyTheme(t) {
   buildMarkers();
   syncGradients(linkData);
   if (linkSel) linkSel
-    .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
+    .attr("marker-end", d => `url(#arrow-${d.metadata?.phase === "exception" ? "exception" : payloadCategory(d.payload)})`)
     .style("stroke", edgeStroke);
 }
 const savedTheme = (() => { try { return localStorage.getItem("pylier-theme") || "dark"; } catch { return "dark"; } })();
