@@ -237,12 +237,30 @@ def derive_value[T](value: T, *, from_: Iterable[object]) -> T:
     return value
 
 
+def _argument_handoff_details(
+    args: tuple, kwargs: dict, arguments: dict[str, Any], level: Level, capture: bool
+) -> dict[str, Any]:
+    """Summarize one inbound handoff without losing single-value type detail."""
+    values = (*args, *kwargs.values())
+    if not values:
+        return {"payload_type": "empty", "size": None, "preview": None, "value": None}
+    payload = values[0] if len(values) == 1 else arguments
+    return {
+        "payload_type": type_name(payload) if len(values) == 1 else "arguments",
+        "size": size_of(payload) if level >= Level.INFO else None,
+        "preview": preview_of(payload) if level >= Level.DEBUG else None,
+        "payload_types": tuple_member_type_names(payload),
+        "value": serialize_value(payload) if capture else None,
+    }
+
+
 def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> contextvars.Token:
     """Register a call, preferring its direct caller over value lineage.
 
     A nested decorated call is an authoritative handoff from its active caller.
-    Fingerprints are consulted only for top-level consumers, where pylier has
-    no direct execution context and historical provenance is the best signal.
+    At the top level, the trace root is the implicit orchestration caller.
+    Fingerprints remain available to ``derive()`` but never bypass either
+    execution boundary in the default graph.
     """
     trace.get_or_create_node(_make_node(meta))
     caller_stack = _execution_stack.get()
@@ -254,15 +272,13 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
     arguments = dict(zip(meta.parameter_names, args, strict=False))
     arguments.update(kwargs)
     fired: list[dict[str, str]] = []
+    handoff_details = _argument_handoff_details(args, kwargs, arguments, level, capture)
 
     if caller is not None:
         trace.add_edge(
             caller.node_id,
             meta.id,
-            payload_type="empty" if not arguments else "arguments",
-            size=size_of(arguments) if level >= Level.INFO else None,
-            preview=preview_of(arguments) if level >= Level.DEBUG else None,
-            value=serialize_value(arguments) if capture else None,
+            **handoff_details,
             metadata={"phase": "arguments"},
             handoff={
                 "invocation_id": invocation_id,
@@ -272,34 +288,14 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
         )
         fired.append({"source": caller.node_id, "target": meta.id})
     else:
-        for arg in (*args, *kwargs.values()):
-            for source_id in trace.lookup_sources(fingerprint(arg)):
-                if source_id == meta.id:
-                    continue
-                trace.add_edge(
-                    source_id,
-                    meta.id,
-                    payload_type=type_name(arg),
-                    size=size_of(arg) if level >= Level.INFO else None,
-                    preview=preview_of(arg) if level >= Level.DEBUG else None,
-                    payload_types=tuple_member_type_names(arg),
-                    value=serialize_value(arg) if capture else None,
-                    metadata={"phase": "arguments"},
-                    handoff={"invocation_id": invocation_id, "arguments": list(arguments)},
-                )
-                fired.append({"source": source_id, "target": meta.id})
-        if not fired and arguments:
-            trace.add_edge(
-                trace.root_node_id,
-                meta.id,
-                payload_type="empty" if not arguments else "arguments",
-                size=size_of(arguments) if level >= Level.INFO else None,
-                preview=preview_of(arguments) if level >= Level.DEBUG else None,
-                value=serialize_value(arguments) if capture else None,
-                metadata={"phase": "arguments"},
-                handoff={"invocation_id": invocation_id, "arguments": list(arguments)},
-            )
-            fired.append({"source": trace.root_node_id, "target": meta.id})
+        trace.add_edge(
+            trace.root_node_id,
+            meta.id,
+            **handoff_details,
+            metadata={"phase": "arguments"},
+            handoff={"invocation_id": invocation_id, "arguments": list(arguments)},
+        )
+        fired.append({"source": trace.root_node_id, "target": meta.id})
     trace.record_event(
         Event(
             ts=time.time(),

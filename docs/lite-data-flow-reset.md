@@ -1,5 +1,5 @@
 # Direct handoff precedence
 
-Nested decorated calls now use their active invocation as the authoritative data handoff, so fingerprint lineage cannot draw a misleading producer-to-nested-callee edge. Repeated calls between the same function nodes are aggregated visually but retain distinct invocation records for edge inspection; fingerprints remain the fallback for consumers called outside a decorated parent.
+Nested decorated calls use their active invocation as the authoritative handoff, while top-level calls use the trace root as their implicit orchestration caller. Repeated calls between the same function nodes aggregate visually but retain distinct invocation records for inspection; fingerprints remain internal provenance for `pylier.derive(...)` rather than default graph edges.
 
-This keeps ordinary function flow truthful while retaining lineage support for values reused through storage, queues, or other non-local paths.
+This keeps ordinary function flow truthful without losing provenance needed for explicit derived values and future lineage inspection.

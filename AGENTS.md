@@ -53,9 +53,9 @@ tooling without an explicit decision.
 - Each decorated invocation has a runtime ID. Repeated calls between the same
   function nodes aggregate in the graph but retain individual handoff records
   for inspection.
-- When no decorated caller is active, entry arguments are fingerprinted and
-  matched to registered return values. This preserves non-local lineage through
-  storage, queues, and later reuse without corrupting ordinary nested flow.
+- The trace root is the implicit caller when no decorated caller is active.
+  Fingerprints remain internal provenance for `pylier.derive(...)` and future
+  lineage inspection; they never bypass execution boundaries in the graph.
 - Transformed/aggregated copies still require `pylier.derive(...)` to preserve
   intentional multi-source lineage.
 
