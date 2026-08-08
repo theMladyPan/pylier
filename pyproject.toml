@@ -1,6 +1,6 @@
 [project]
 name = "pylier"
-version = "1.1.0"
+version = "1.2.0"
 description = "Decorator-driven data process & pipeline visualization. Render running code as a force-directed graph."
 readme = "README.md"
 requires-python = ">=3.14"
