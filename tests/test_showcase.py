@@ -27,6 +27,7 @@ def test_showcase_embeds_its_user_guide_in_the_module_docstring():
     assert "pylier-fulfillment.jsonl" in guide
     assert "uv run python -m examples.showcase serve" in guide
     assert "0.75-second pause" in guide
+    assert "concurrent inventory and shipping branches" in guide
     assert "cross-process live viewer input" in guide
     assert not (Path(__file__).parents[1] / "docs" / "showcase-guide.md").exists()
 
@@ -40,15 +41,46 @@ def test_debug_showcase_exercises_supported_graph_semantics():
     tagged_nodes = {node["name"]: node["tags"] for node in graph["nodes"]}
 
     edge_pairs = {(edge["source"], edge["target"]) for edge in graph["links"]}
+    data_edge_pairs = {(edge["source"], edge["target"]) for edge in graph["perspectives"]["data"]["links"]}
 
     assert "audit_risk" in node_names
     assert "is_priority_order" not in node_names
     assert {"int", "float", "str", "list", "dict", "set", "tuple", "bytes"} <= payload_types
     assert {"RiskAssessment", "FulfillmentPackage"} <= payload_types
-    # Top-level showcase orchestration belongs to the trace root, not to the
-    # preceding function that happened to produce an equal payload.
-    assert (trace.root_node_id, "pylier_showcase.rank_items") in edge_pairs
-    assert (trace.root_node_id, "pylier_showcase.expand_rank") in edge_pairs
+
+    def showcase_node(name: str) -> str:
+        return f"pylier_showcase.{name}"
+
+    root_entries = {target for source, target in edge_pairs if source == trace.root_node_id}
+    assert root_entries == {showcase_node("fulfill_order")}
+    assert (showcase_node("fulfill_order"), showcase_node("assess_order")) in edge_pairs
+    assert (showcase_node("fulfill_order"), showcase_node("prepare_inventory")) in edge_pairs
+    assert (showcase_node("fulfill_order"), showcase_node("prepare_shipping")) in edge_pairs
+    assert (showcase_node("fulfill_order"), showcase_node("finalize_fulfillment")) in edge_pairs
+    assert (showcase_node("prepare_inventory"), showcase_node("rank_items")) in edge_pairs
+    assert (showcase_node("prepare_inventory"), showcase_node("expand_rank")) in edge_pairs
+    assert (showcase_node("prepare_shipping"), showcase_node("shipping_zone")) in edge_pairs
+    assert (showcase_node("finalize_fulfillment"), showcase_node("assemble_fulfillment")) in edge_pairs
+    assert (showcase_node("prepare_inventory"), showcase_node("finalize_fulfillment")) in data_edge_pairs
+    assert (showcase_node("prepare_shipping"), showcase_node("finalize_fulfillment")) in data_edge_pairs
+    invocations_by_node = {invocation.node_id: invocation for invocation in trace.invocations.values()}
+    workflow_invocation = invocations_by_node[showcase_node("fulfill_order")]
+    inventory_invocation = invocations_by_node[showcase_node("prepare_inventory")]
+    shipping_invocation = invocations_by_node[showcase_node("prepare_shipping")]
+    finalization_invocation = invocations_by_node[showcase_node("finalize_fulfillment")]
+    assert inventory_invocation.parent_invocation_id == workflow_invocation.id
+    assert shipping_invocation.parent_invocation_id == workflow_invocation.id
+    assert finalization_invocation.parent_invocation_id == workflow_invocation.id
+    assert (
+        len(
+            [
+                invocation
+                for invocation in trace.invocations.values()
+                if invocation.node_id == showcase_node("rank_items")
+            ]
+        )
+        == 2
+    )
     assert tagged_nodes["rank_items"] == ["inventory", "loop"]
     assert tagged_nodes["reserve_inventory"] == ["inventory", "async"]
     assert any(node["is_async"] for node in graph["nodes"])
@@ -59,8 +91,11 @@ def test_debug_showcase_exercises_supported_graph_semantics():
 def test_info_showcase_omits_the_debug_only_risk_node():
     trace = asyncio.run(showcase.run_fulfillment("showcase-info", level=Level.INFO))
 
-    assert all(node.name != "audit_risk" for node in trace.nodes.values())
-    assert len(trace.nodes) < 13
+    node_names = {node.name for node in trace.nodes.values()}
+
+    assert "audit_risk" not in node_names
+    assert {"fulfill_order", "prepare_inventory", "prepare_shipping"} <= node_names
+    assert len(trace.nodes) == 18
 
 
 def test_showcase_writes_static_artifacts_and_resolved_sidecar(tmp_path):

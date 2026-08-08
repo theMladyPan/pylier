@@ -19,6 +19,10 @@ in the left filter pane, and compare the full graph with the INFO artifact.
 
 What to look for in this fulfillment flow:
 
+* Application Flow begins at one ``fulfill_order`` coordinator, then branches
+  into assessment, inventory, and shipping work before reconverging for
+  finalization. The concurrent inventory and shipping branches are visible
+  independently in the live view.
 * Decorated return values are passed directly into decorated consumers, so
   pylier infers every edge without explicit wiring.
 * Payload edges cover ``int``, ``float``, ``str``, ``list``, ``dict``,
@@ -27,11 +31,12 @@ What to look for in this fulfillment flow:
 * ``validate_order → assemble_fulfillment`` carries a mixed
   ``tuple[bool, float, str]`` edge, rendered as a tuple gradient.
 * ``rank_items → expand_rank → rank_items`` is a real inferred data-flow
-  cycle. It demonstrates a bounded refinement loop without recursive calls.
+  cycle. It demonstrates bounded repeated work without recursive calls.
 * Tags such as ``order``, ``inventory``, ``shipping``, ``loop``, and ``async``
   power both the filter pane and node inspector.
 * ``reserve_inventory``, ``quote_shipping``, and
-  ``purchase_shipping_label`` are decorated async nodes.
+  ``purchase_shipping_label`` are decorated async nodes. The concurrent
+  inventory and shipping branches finish at different times in the live view.
 * ``audit_risk`` is declared at ``level=\"debug\"`` to make the capture-level
   comparison visible.
 * The showcase enables value capture only for these harmless synthetic
@@ -88,6 +93,14 @@ class FulfillmentPackage:
 
 
 @dataclass(frozen=True)
+class InventoryPlan:
+    """Reservation and refined item count produced by the inventory branch."""
+
+    reservation: dict[str, Any]
+    item_count: int
+
+
+@dataclass(frozen=True)
 class ShowcaseArtifacts:
     """Files produced by the static showcase command."""
 
@@ -126,6 +139,12 @@ def extract_items(order: dict[str, Any]) -> list[dict[str, Any]]:
 def shipping_zone(order: dict[str, Any]) -> str:
     """Read the destination zone for downstream shipping pricing."""
     return str(order["destination"])
+
+
+@pylier.node(_tags=["shipping", "items"])
+def count_shipping_items(order: dict[str, Any]) -> int:
+    """Count ordered units independently for the shipping branch."""
+    return sum(int(item["quantity"]) for item in order["items"])
 
 
 @pylier.node(_tags=["inventory", "warehouses"])
@@ -203,6 +222,70 @@ def publish_fulfillment(package: FulfillmentPackage) -> str:
     return f"published:{package.order_id}:{package.warehouse}"
 
 
+@pylier.node(_tags=["fulfillment", "assessment"])
+def assess_order(order: dict[str, Any]) -> tuple[tuple[bool, float, str], RiskAssessment]:
+    """Run the independent approval and risk checks for one order."""
+    return validate_order(order), audit_risk(order)
+
+
+@pylier.node(_tags=["fulfillment", "inventory", "async"])
+async def prepare_inventory(order: dict[str, Any], stage_delay: float) -> InventoryPlan:
+    """Build the deeper inventory branch with bounded repeated refinement."""
+    items = extract_items(order)
+    await _pause(stage_delay)
+    initial_rank = rank_items(items)
+    await _pause(stage_delay)
+    refined_items = expand_rank(initial_rank)
+    await _pause(stage_delay)
+    refined_item_count = rank_items(refined_items)
+    await _pause(stage_delay)
+    warehouses = choose_warehouses(items)
+    await _pause(stage_delay)
+    reservation = await reserve_inventory(items, warehouses)
+    return InventoryPlan(reservation=reservation, item_count=refined_item_count)
+
+
+@pylier.node(_tags=["fulfillment", "shipping", "async"])
+async def prepare_shipping(order: dict[str, Any], stage_delay: float) -> float:
+    """Build the shorter shipping branch independently of inventory work."""
+    zone = shipping_zone(order)
+    await _pause(stage_delay)
+    item_count = count_shipping_items(order)
+    await _pause(stage_delay)
+    return await quote_shipping(zone, item_count)
+
+
+@pylier.node(_tags=["fulfillment", "finalize", "async"])
+async def finalize_fulfillment(
+    order: dict[str, Any],
+    approval: tuple[bool, float, str],
+    risk: RiskAssessment,
+    inventory: InventoryPlan,
+    shipping_cost: float,
+    stage_delay: float,
+) -> str:
+    """Recombine branch results, create a label, and publish the receipt."""
+    label = await purchase_shipping_label(order, inventory.reservation)
+    await _pause(stage_delay)
+    package = assemble_fulfillment(approval, risk, inventory.reservation, shipping_cost, label)
+    await _pause(stage_delay)
+    return publish_fulfillment(package)
+
+
+@pylier.node(_tags=["fulfillment", "workflow", "async"])
+async def fulfill_order(stage_delay: float = 0.0) -> str:
+    """Coordinate one complete fulfillment run with concurrent work streams."""
+    order = create_order()
+    await _pause(stage_delay)
+    approval, risk = assess_order(order)
+    await _pause(stage_delay)
+    inventory, shipping_cost = await asyncio.gather(
+        prepare_inventory(order, stage_delay), prepare_shipping(order, stage_delay)
+    )
+    await _pause(stage_delay)
+    return await finalize_fulfillment(order, approval, risk, inventory, shipping_cost, stage_delay)
+
+
 async def run_fulfillment(
     name: str,
     *,
@@ -276,36 +359,8 @@ async def serve_fulfillment(output_dir: Path = Path("."), stage_delay: float = 0
 
 
 async def _execute_fulfillment(stage_delay: float) -> str:
-    """Execute the direct-handoff flow in whichever trace is active."""
-    order = create_order()
-    await _pause(stage_delay)
-    approval = validate_order(order)
-    await _pause(stage_delay)
-    items = extract_items(order)
-    await _pause(stage_delay)
-    # Reusing rank_items after expand_rank intentionally records rank → expand → rank.
-    # This bounded data cycle is visible in the graph without recursive execution.
-    initial_rank = rank_items(items)
-    await _pause(stage_delay)
-    refined_items = expand_rank(initial_rank)
-    await _pause(stage_delay)
-    item_count = rank_items(refined_items)
-    await _pause(stage_delay)
-    zone = shipping_zone(order)
-    await _pause(stage_delay)
-    warehouses = choose_warehouses(items)
-    await _pause(stage_delay)
-    risk = audit_risk(order)
-    await _pause(stage_delay)
-    reservation = await reserve_inventory(items, warehouses)
-    await _pause(stage_delay)
-    shipping_cost = await quote_shipping(zone, item_count)
-    await _pause(stage_delay)
-    label = await purchase_shipping_label(order, reservation)
-    await _pause(stage_delay)
-    package = assemble_fulfillment(approval, risk, reservation, shipping_cost, label)
-    await _pause(stage_delay)
-    return publish_fulfillment(package)
+    """Execute one nested fulfillment workflow in whichever trace is active."""
+    return await fulfill_order(stage_delay)
 
 
 @contextlib.contextmanager
