@@ -21,7 +21,7 @@ _EMBED_TOKEN = "__PYLIER_GRAPH_JSON__"
 _NAME_TOKEN = "{{NAME}}"
 
 
-def build_html(trace: Trace) -> str:
+def build_html(trace: Trace, *, history: Any | None = None) -> str:
     """Return a complete HTML string for ``trace``.
 
     The graph JSON is injected twice: once as a JS object for the renderer to
@@ -29,20 +29,20 @@ def build_html(trace: Trace) -> str:
     ``file://`` fallback (mirroring the PoC's offline-open behavior).
     """
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    graph = trace.to_graph_dict()
+    graph = history.to_view_dict() if history is not None else trace.to_graph_dict()
     data_json = json.dumps(graph, default=str, ensure_ascii=False)
     html = (
         template.replace(_DATA_TOKEN, data_json)
         .replace(_EMBED_TOKEN, data_json)
-        .replace(_NAME_TOKEN, _escape(str(graph.get("name", "trace"))))
+        .replace(_NAME_TOKEN, _escape(trace.name))
     )
     return html
 
 
-def render_to_file(trace: Trace, path: str | Path) -> Path:
+def render_to_file(trace: Trace, path: str | Path, *, history: Any | None = None) -> Path:
     """Write ``trace`` as a self-contained HTML file and return its path."""
     out = Path(path)
-    out.write_text(build_html(trace), encoding="utf-8")
+    out.write_text(build_html(trace, history=history), encoding="utf-8")
     return out
 
 

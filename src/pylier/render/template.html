@@ -91,14 +91,13 @@
   #header .theme-btn:hover { border-color: var(--accent); }
 
   #main {
-    --filter-w: 240px;
-    --sidebar-w: 320px;
-    flex: 1; display: grid; grid-template-columns: var(--filter-w) minmax(0, 1fr) var(--sidebar-w);
+    --left-w: 260px; --sidebar-w: 320px;
+    flex: 1; display: grid; grid-template-columns: var(--left-w) minmax(0, 1fr) var(--sidebar-w);
     min-height: 0;
   }
-  #main.filters-collapsed { grid-template-columns: 34px minmax(0, 1fr) var(--sidebar-w); }
-  #main.sidebar-collapsed { grid-template-columns: var(--filter-w) minmax(0, 1fr) 34px; }
-  #main.filters-collapsed.sidebar-collapsed { grid-template-columns: 34px minmax(0, 1fr) 34px; }
+  #main.left-collapsed { grid-template-columns: 34px minmax(0, 1fr) var(--sidebar-w); }
+  #main.sidebar-collapsed { grid-template-columns: var(--left-w) minmax(0, 1fr) 34px; }
+  #main.left-collapsed.sidebar-collapsed { grid-template-columns: 34px minmax(0, 1fr) 34px; }
   #graph-wrap { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   #graph {
     flex: 1; min-width: 0; min-height: 0; height: auto; background: var(--bg);
@@ -107,8 +106,23 @@
   }
   svg { width: 100%; height: 100%; display: block; }
 
-  #filters, #sidebar { background: var(--panel-bg); overflow: auto; min-width: 0; }
-  #filters { border-right: 1px solid var(--panel-border); }
+  #traces, #sidebar { background: var(--panel-bg); overflow: auto; min-width: 0; }
+  #traces { border-right: 1px solid var(--panel-border); }
+  #main.left-collapsed #traces { overflow: hidden; }
+  #main.left-collapsed #traces .pane-head { height: 100%; padding: 8px 0; justify-content: center; align-items: flex-start; }
+  #main.left-collapsed #traces .pane-head h2,
+  #main.left-collapsed #traces #selector-traces,
+  #main.left-collapsed #traces #filters { display: none; }
+  #main.left-collapsed #traces #b-left { color: var(--text); font-size: 16px; padding: 5px 8px; }
+  #main.left-collapsed #traces #b-left:hover { color: var(--accent); }
+  #filters { border-top: 1px solid var(--panel-border); }
+  #main.left-collapsed #traces > :not(.pane-head) { display: none; }
+  .trace-tab { width: 100%; background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--text); cursor: pointer; font: 11px var(--mono); margin: 3px 0; padding: 9px; text-align: left; }
+  .trace-tab:hover { background: var(--panel-2); }.trace-tab.active { background: color-mix(in srgb, var(--accent) 16%, var(--panel-2)); border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border)); }
+  .trace-tab .method { color: var(--st-idle); font-size: 9px; margin-right: 5px; }.trace-tab .meta { color: var(--muted); display: block; font-size: 9px; margin-top: 4px; }
+  #trace-list { padding: 8px; }
+  #endpoint-bar { flex: 0 0 auto; background: var(--panel-bg); border-bottom: 1px solid var(--panel-border); display: flex; gap: 4px; overflow: auto; padding: 7px 12px 0; }
+  .endpoint-tab { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; color: var(--muted); cursor: pointer; font: 11px var(--mono); padding: 7px 10px; white-space: nowrap; }.endpoint-tab.active { background: var(--panel-2); border-color: var(--panel-border); color: var(--accent); }
   #sidebar { border-left: 1px solid var(--panel-border); position: relative; }
   .pane-head {
     height: 40px; padding: 0 10px; border-bottom: 1px solid var(--panel-border);
@@ -120,10 +134,11 @@
     font: 14px var(--mono);
   }
   .pane-toggle:hover { color: var(--accent); }
-  #filters.filter-collapsed, #sidebar.sidebar-collapsed { overflow: hidden; }
-  #filters.filter-collapsed .pane-content, #sidebar.sidebar-collapsed .pane-content { display: none; }
-  #filters.filter-collapsed .pane-head, #sidebar.sidebar-collapsed .pane-head { height: 100%; padding: 8px; align-items: flex-start; }
-  #filters.filter-collapsed .pane-head h2, #sidebar.sidebar-collapsed .pane-head h2 { display: none; }
+  .section-collapsed .pane-content, .section-collapsed #trace-list { display: none; }
+  #sidebar.sidebar-collapsed { overflow: hidden; }
+  #sidebar.sidebar-collapsed .pane-content { display: none; }
+  #sidebar.sidebar-collapsed .pane-head { height: 100%; padding: 8px; align-items: flex-start; }
+  #sidebar.sidebar-collapsed .pane-head h2 { display: none; }
   #filters section, #sidebar section { padding: 16px; border-bottom: 1px solid var(--panel-border); }
   #filters section h2, #sidebar section h2 { font-size: 10px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .13em; }
   .resize-handle { position: absolute; z-index: 2; left: -5px; top: 0; width: 10px; height: 100%; cursor: col-resize; }
@@ -140,6 +155,29 @@
   #details .edges { margin-top: 8px; }
   #details .edge-line { font-size: 12px; margin: 2px 0; }
   #details .edge-line .arr { color: var(--accent); }
+  .invocation-list { display: grid; gap: 4px; margin-top: 6px; }
+  .invocation-card { border: 1px solid var(--panel-border); border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+  .invocation-toggle { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; width: 100%; gap: 6px; align-items: center; padding: 6px 8px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: 11px var(--mono); }
+  .invocation-toggle:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .invocation-toggle .chevron { color: var(--muted); }
+  .invocation-toggle .call-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .invocation-toggle .call-meta { color: var(--muted); white-space: nowrap; }
+  .invocation-body { border-top: 1px solid var(--panel-border); padding: 5px 8px; }
+  .invocation-body .payload-title { color: var(--muted); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; margin: 0 0 5px; }
+  .invocation-body pre { margin: 0; max-height: 260px; }
+  .json-key { color: var(--type-float); }
+  .json-string { color: var(--type-str); }
+  .json-number { color: var(--type-int); }
+  .json-boolean { color: var(--type-bool); }
+  .json-null { color: var(--muted); }
+  .invocation-hint { color: var(--muted); font-size: 11px; margin: 4px 0 0; }
+  .invocation-io { display: grid; gap: 2px; }
+  .io-toggle { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 0; border: 0; background: transparent; color: var(--text); cursor: pointer; font: 11px var(--mono); text-align: left; }
+  .io-toggle:hover { color: var(--accent); }
+  .io-toggle .chevron { color: var(--muted); }
+  .io-toggle .io-meta { margin-left: auto; color: var(--muted); }
+  .io-payload { border-top: 1px solid var(--panel-border); padding: 4px 0; }
+  .io-payload pre.value { padding: 4px 6px; max-height: 200px; }
   #details pre.value {
     background: var(--bg); border: 1px solid var(--panel-border); border-radius: 6px;
     padding: 6px; font: 11px var(--mono); max-height: 240px; overflow: auto;
@@ -166,7 +204,7 @@
   .filter-mode { display: flex; gap: 12px; margin-top: 12px; font-size: 12px; }
   .filter-mode label { cursor: pointer; }
   #footer {
-    flex: 0 0 34px; min-width: 0; border-top: 1px solid var(--panel-border); background: var(--panel-2);
+    position: relative; flex: 0 0 34px; min-width: 0; border-top: 1px solid var(--panel-border); background: var(--panel-2);
     color: var(--muted); font-size: 10px; overflow: hidden;
   }
   #footer.console-open { flex-basis: 190px; display: flex; flex-direction: column; }
@@ -176,12 +214,23 @@
   .console-toggle { margin-left: auto; }
   .console-toggle:hover, .console-clear:hover { color: var(--text); }
   #event-console { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--panel-border); background: var(--bg); }
+  #event-console[hidden] { display: none; }
+  .console-resize-handle { display: none; position: absolute; z-index: 3; top: -5px; left: 0; width: 100%; height: 10px; cursor: ns-resize; }
+  .console-resize-handle::after { content: ""; position: absolute; top: 4px; left: 0; right: 0; height: 1px; background: transparent; }
+  .console-resize-handle:hover::after, .console-resize-handle.dragging::after { background: var(--accent); }
+  #footer.console-open .console-resize-handle { display: block; }
   .console-head { flex: 0 0 28px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--panel-border); color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
   .console-clear { margin-left: auto; text-transform: none; letter-spacing: 0; }
   #event-log { flex: 1; min-height: 0; overflow: auto; padding: 7px 12px; font: 11px/1.55 var(--mono); }
-  .console-entry { display: flex; gap: 10px; white-space: nowrap; }
+  .console-entry { border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent); }
+  .console-entry summary { display: grid; grid-template-columns: 12px 82px 46px minmax(0, 1fr); gap: 8px; align-items: center; padding: 3px 0; cursor: pointer; list-style: none; white-space: nowrap; }
+  .console-entry summary::-webkit-details-marker { display: none; }
+  .console-entry summary::before { content: "▶"; color: var(--muted); }
+  .console-entry[open] summary::before { content: "▼"; }
   .console-entry time { color: var(--muted); }
-  .console-entry .event-kind { color: var(--accent); min-width: 40px; }
+  .console-entry .event-kind { color: var(--accent); }
+  .console-entry .event-summary { overflow: hidden; text-overflow: ellipsis; }
+  .console-entry pre { margin: 0 0 6px 20px; max-height: 280px; overflow: auto; }
   .console-empty { color: var(--muted); font-style: italic; }
   .type-key { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
   .type-key i { width: 12px; height: 2px; display: inline-block; }
@@ -197,6 +246,9 @@
   .node rect.body { fill: var(--card); stroke: var(--node-stroke); stroke-width: 1; }
   .node:hover rect.body { stroke: var(--accent); stroke-width: 1.5; }
   .node rect.status { stroke: none; }
+  .node.fastapi rect.body { stroke: var(--accent); stroke-width: 1.5; }
+  .node.otel rect.body { stroke: var(--type-tuple); stroke-width: 1.5; }
+  .node.endpoint rect.body { stroke: var(--st-idle); stroke-width: 1.5; }
   .node text { pointer-events: none; font-family: var(--mono); }
   .node .num { font-size: 9px; fill: var(--muted); }
   .node .name { font-size: 13px; font-weight: 700; fill: var(--ink); }
@@ -206,11 +258,15 @@
 
   /* Match the mockup's fine-line, low-noise graph treatment. */
   .link { fill: none; opacity: .8; stroke-width: 1.5px; }
+  /* Handoff phase changes lane/style, never its payload-type color. */
+  .link.return { stroke-dasharray: 7 6; opacity: .8; }
+  .link.exception { stroke: #f85149 !important; stroke-dasharray: 1 5; stroke-linecap: round; opacity: .95; }
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
   .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden, .trace-start.tag-hidden { display: none; }
   .trace-start { pointer-events: none; }
   .trace-start path { fill: none; stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 3; opacity: .8; }
+  .trace-start.fastapi path, .trace-start.fastapi text { stroke: var(--type-tuple); fill: var(--type-tuple); }
   .trace-start text { fill: var(--accent); font: 700 9px var(--mono); letter-spacing: .12em; }
   /* A firing handoff keeps its inferred stroke and fades a type-matched glow. */
   .link.firing {
@@ -238,8 +294,14 @@
   <button class="theme-btn" id="b-theme">☀ light</button>
 </div>
 <div id="main">
-  <aside id="filters" aria-label="Filters">
-    <div class="pane-head"><h2>Filters</h2><button class="pane-toggle" id="b-filters" title="Collapse filters">‹</button></div>
+  <aside id="traces" aria-label="Selectors">
+    <div class="pane-head"><h2>Selectors</h2><button class="pane-toggle" id="b-left" title="Collapse selectors" aria-label="Collapse selectors">‹</button></div>
+    <section id="selector-traces" aria-label="Traces">
+      <div class="pane-head"><h2>Traces</h2><button class="pane-toggle" id="b-traces" title="Collapse traces">⌃</button></div>
+      <div id="trace-list"></div>
+    </section>
+    <section id="filters" aria-label="Filters">
+    <div class="pane-head"><h2>Filters</h2><button class="pane-toggle" id="b-filters" title="Collapse filters">⌃</button></div>
     <div class="pane-content">
       <section id="tag-filter">
         <h2>Tags</h2>
@@ -252,6 +314,11 @@
       </section>
       <section class="controls">
         <h2>View</h2>
+        <div class="edge-mode" role="group" aria-label="Graph perspective">
+          <span>Perspective</span>
+          <label><input type="radio" name="perspective" value="application" checked /> Application Flow</label>
+          <label><input type="radio" name="perspective" value="data" /> Data Flow</label>
+        </div>
         <div class="edge-mode" role="group" aria-label="Edge routing">
           <span>Edges</span>
           <label><input type="radio" name="edge-mode" value="rectilinear" checked /> Rectilinear</label>
@@ -265,10 +332,13 @@
         </div>
       </section>
     </div>
+    </section>
   </aside>
   <div id="graph-wrap">
+    <div id="endpoint-bar" aria-label="Endpoints"></div>
     <svg id="graph"></svg>
     <footer id="footer" aria-label="Payload type legend and SSE event console">
+      <div class="console-resize-handle" id="console-resize" title="Resize SSE console"></div>
       <div class="footer-bar">
         <div class="footer-legend" aria-label="Payload type legend">
           <span class="type-key"><i class="bool"></i>bool</span><span class="type-key"><i class="int"></i>int</span>
@@ -292,7 +362,7 @@
       <section class="summary" id="summary">
         <h2>Run summary</h2>
         <div class="row"><span>nodes</span><b id="s-nodes">0</b></div>
-        <div class="row"><span>handoffs</span><b id="s-handoffs">0</b></div>
+        <div class="row"><span id="s-handoffs-label">handoffs</span><b id="s-handoffs">0</b></div>
         <div class="row"><span>duration</span><b id="s-dur">—</b></div>
         <div class="row"><span>trace</span><b id="s-trace">—</b></div>
       </section>
@@ -364,18 +434,71 @@ function nodeW(d) {
   const longest = Math.max((d.name || "").length, (d.category || "").length);
   return Math.max(176, longest * 7.2 + 56);
 }
-function fmtMs(v) {
-  if (v == null) return null;
-  return v < 1 ? v.toFixed(2) : v < 100 ? Math.round(v) + "" : Math.round(v) + "";
+function fmtDuration(ms) {
+  if (ms == null) return null;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 }
 
+let selectedTraceId = null;
+function loadView() {
+  const source = liveData || RAW;
+  if (source && Array.isArray(source.traces)) return source;
+  if (source && source.nodes) return { traces: [source] };
+  const text = document.getElementById("embedded-data").textContent.trim();
+  if (text.startsWith("{")) {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed.traces) ? parsed : { traces: [parsed] };
+  }
+  return { traces: [] };
+}
 function loadData() {
-  if (liveData && liveData.nodes) return liveData;
-  if (RAW && RAW.nodes && RAW.nodes.length) return RAW;
-  const el = document.getElementById("embedded-data");
-  const txt = el.textContent.trim();
-  if (txt.startsWith("{")) return JSON.parse(txt);
-  return { nodes: [], links: [], categories: [], dataTypes: [], events: [] };
+  const traces = loadView().traces;
+  if (!traces.length) return { nodes: [], links: [], categories: [], dataTypes: [], events: [] };
+  const selected = traces.find(trace => trace.id === selectedTraceId) || traces[0];
+  selectedTraceId = selected.id;
+  return selected;
+}
+function renderTraceTabs(data) {
+  const traces = loadView().traces;
+  const traceList = document.getElementById("trace-list");
+  traceList.replaceChildren(...traces.map(trace => {
+    const tab = document.createElement("button");
+    tab.className = `trace-tab${trace.id === selectedTraceId ? " active" : ""}`;
+    const root = trace.root || {};
+    if (root.method) {
+      const method = document.createElement("span");
+      method.className = "method";
+      method.textContent = root.method;
+      tab.append(method);
+    }
+    tab.append(document.createTextNode(root.route || trace.name));
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = `${trace.nodes.length} nodes · ${trace.endpoint?.status_code || "recorded"}`;
+    tab.append(meta);
+    tab.addEventListener("click", () => { selectedTraceId = trace.id; active.clear(); state.selected = null; update(); });
+    return tab;
+  }));
+  const endpointBar = document.getElementById("endpoint-bar");
+  endpointBar.replaceChildren();
+  const endpoints = data.nodes.filter(node => node.kind === "endpoint");
+  const endpointNodes = endpoints.length ? endpoints : [{ id: data.id, name: data.endpoint?.name || data.name || "trace" }];
+  endpointNodes.forEach((endpoint, index) => {
+    const tab = document.createElement("button");
+    tab.className = `endpoint-tab${index === 0 ? " active" : ""}`;
+    tab.textContent = endpoint.name;
+    tab.addEventListener("click", () => {
+      endpointBar.querySelectorAll("button").forEach(button => button.classList.remove("active"));
+      tab.classList.add("active");
+      if (endpoint.id !== data.id && nodeByIdNow(endpoint.id)) {
+        state.selected = endpoint.id;
+        highlight(nodeByIdNow(endpoint.id));
+        renderDetails(nodeByIdNow(endpoint.id));
+      }
+    });
+    endpointBar.append(tab);
+  });
 }
 
 // Live mode: SSE push (graph on topology change, exec batches in real time).
@@ -391,23 +514,35 @@ function formatSseTime(date) {
 }
 
 function summarizeSseEvent(kind, payload) {
-  if (kind === "graph") return `${payload.nodes?.length || 0} nodes · ${payload.links?.length || 0} handoffs`;
+  if (kind === "graph") {
+    const traces = Array.isArray(payload.traces) ? payload.traces : [payload];
+    const nodes = traces.reduce((total, trace) => total + (trace.nodes?.length || 0), 0);
+    const handoffs = traces.reduce((total, trace) => total + (trace.links?.length || 0), 0);
+    const prefix = Array.isArray(payload.traces) ? `${traces.length} trace${traces.length === 1 ? "" : "s"} · ` : "";
+    return `${prefix}${nodes} nodes · ${handoffs} handoffs`;
+  }
   const events = Array.isArray(payload) ? payload : [];
   const names = events.slice(0, 3).map(event => `${event.kind}:${String(event.node_id || "unknown").split(".").at(-1)}`).join(", ");
   return `${events.length} execution event${events.length === 1 ? "" : "s"}${names ? ` · ${names}` : ""}`;
 }
 
 function consoleLine(entry) {
-  const line = document.createElement("div");
+  const line = document.createElement("details");
   line.className = "console-entry";
+  const header = document.createElement("summary");
   const time = document.createElement("time");
   time.textContent = entry.time;
   const kind = document.createElement("span");
   kind.className = "event-kind";
   kind.textContent = entry.kind;
   const summary = document.createElement("span");
+  summary.className = "event-summary";
   summary.textContent = entry.summary;
-  line.append(time, kind, summary);
+  header.append(time, kind, summary);
+  const raw = document.createElement("pre");
+  raw.className = "value";
+  renderPayload(raw, entry.raw);
+  line.append(header, raw);
   return line;
 }
 
@@ -438,7 +573,12 @@ function flushSseLog() {
 }
 
 function logSseEvent(kind, payload) {
-  const entry = { time: formatSseTime(new Date()), kind, summary: summarizeSseEvent(kind, payload) };
+  const entry = {
+    time: formatSseTime(new Date()),
+    kind,
+    summary: summarizeSseEvent(kind, payload),
+    raw: JSON.stringify(payload, null, 2),
+  };
   sseLog.push(entry);
   pendingSseLog.push(entry);
   if (sseLog.length > SSE_LOG_LIMIT) sseLog.shift();
@@ -460,12 +600,17 @@ if (LIVE) {
   es.addEventListener("exec", (e) => {
     const events = JSON.parse(e.data);
     logSseEvent("exec", events);
-    playEvents(events);
+    // History-mode batches carry a trace ID; do not animate another trace in
+    // the currently selected graph tab.
+    playEvents(events.filter(event => !event.trace_id || event.trace_id === selectedTraceId));
   });
   es.onerror = () => { es.close(); };
 }
 
-let state = { showLabels: true, animate: true, edgeMode: "rectilinear", selected: null, tagFilter: new Set(), tagMode: "any" };
+let state = { showLabels: true, animate: true, showFramework: false, edgeMode: "rectilinear", perspective: "application", selected: null, tagFilter: new Set(), tagMode: "any" };
+function perspectiveLinks(data) {
+  return data.perspectives?.[state.perspective]?.links || data.links || [];
+}
 // nodes currently executing (enter seen, exit not) — drives the status stripe
 const active = new Set();
 
@@ -493,6 +638,11 @@ function buildMarkers() {
       .attr("markerUnits", "userSpaceOnUse");
     marker.append("path").attr("d", "M0,-4L8,0L0,4Z").attr("fill", typeFillOf(category));
   });
+  const exception = defs.append("marker")
+    .attr("id", "arrow-exception").attr("viewBox", "0 -4 8 8").attr("refX", 7).attr("refY", 0)
+    .attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
+    .attr("markerUnits", "userSpaceOnUse");
+  exception.append("path").attr("d", "M0,-4L8,0L0,4Z").attr("fill", "#f85149");
 }
 
 function syncGradients(links) {
@@ -577,18 +727,21 @@ function applyTagVisibility() {
 }
 
 function traceStartNode(data, nodes) {
-  const startId = (data.events || []).find(event => event.kind === "enter")?.node_id;
-  return nodes.find(node => node.id === startId) || nodes[0] || null;
+  return nodes.find(node => node.is_root) || nodes.find(node => node.is_start)
+    || nodes.find(node => node.id === (data.events || []).find(event => event.kind === "enter")?.node_id)
+    || nodes[0] || null;
 }
 
 function updateStartMarker(data, nodes) {
-  const start = traceStartNode(data, nodes);
+  // Data Flow deliberately hides orchestration/root concepts; its links are
+  // direct producer-to-consumer provenance rather than trace entry paths.
+  const start = state.perspective === "data" ? null : traceStartNode(data, nodes);
   const startJoin = startsG.selectAll("g.trace-start").data(start ? [start] : [], node => node.id);
   startJoin.exit().remove();
   const startEnter = startJoin.enter().append("g").attr("class", "trace-start");
   startEnter.append("path");
   startEnter.append("text").text("START");
-  startSel = startJoin.merge(startEnter);
+  startSel = startJoin.merge(startEnter).attr("class", node => `trace-start${node.kind === "fastapi" ? " fastapi" : ""}`);
   startSel.select("path").attr("d", node => {
     const x = -nodeW(node) / 2;
     const y = -NH / 2;
@@ -619,10 +772,13 @@ function renderTagFilters(nodes) {
 
 function update() {
   const data = loadData();
+  renderTraceTabs(data);
   // header + summary
   d3.select("#h-name").text(data.name || "trace");
   d3.select("#s-nodes").text(data.nodes.length);
-  d3.select("#s-handoffs").text(data.handoffs || 0);
+  const dataPerspective = state.perspective === "data";
+  d3.select("#s-handoffs-label").text(dataPerspective ? "data transfers" : "handoffs");
+  d3.select("#s-handoffs").text(dataPerspective ? (data.data_transfers || 0) : (data.handoffs || 0));
   const totalMs = data.total_ms || 0;
   d3.select("#s-dur").text(totalMs ? `${totalMs.toFixed(1)} ms` : "—");
   d3.select("#h-dur").text(totalMs ? `${(totalMs / 1000).toFixed(2)} s total` : "");
@@ -633,16 +789,17 @@ function update() {
 
   const prevById = new Map(nodeData.map(n => [n.id, n]));
   const prevNodeIds = new Set(prevById.keys());
-  const fresh = data.nodes.map((d, i) => {
+  const displayedNodes = state.perspective === "data" ? data.nodes.filter(node => !node.is_root) : data.nodes;
+  const fresh = displayedNodes.map((d, i) => {
     const prev = prevById.get(d.id);
     if (prev) return Object.assign(prev, d);
-    const sp = spawnPosition(d.id, prevById, data, i, data.nodes.length);
+    const sp = spawnPosition(d.id, prevById, { ...data, nodes: displayedNodes }, i, displayedNodes.length);
     return Object.assign({}, d, { x: sp.x, y: sp.y });
   });
   const nodeById = new Map(fresh.map(n => [n.id, n]));
 
   renderTagFilters(fresh);
-  const links = data.links
+  const links = perspectiveLinks(data)
     .map((l, i) => ({ ...l, _idx: i }))
     .filter(l => nodeById.has(l.source) && nodeById.has(l.target));
 
@@ -662,7 +819,7 @@ function update() {
   const nodeJoin = nodesG.selectAll("g.node").data(fresh, d => d.id);
   nodeJoin.exit().remove();
   const nodeEnter = nodeJoin.enter().append("g")
-    .attr("class", d => "node" + (d.is_async ? " async" : ""))
+    .attr("class", d => `node ${d.kind || "pylier"}${d.is_async ? " async" : ""}`)
     .call(d3.drag()
       .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
       .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
@@ -676,7 +833,7 @@ function update() {
   nodeEnter.on("click", (e, d) => { state.selected = d.id; highlight(d); renderDetails(d); });
 
   nodeSel = nodeJoin.merge(nodeEnter);
-  nodeSel.attr("class", d => "node" + (d.is_async ? " async" : "") + (active.has(d.id) ? " pulsing" : ""));
+  nodeSel.attr("class", d => `node ${d.kind || "pylier"}${d.is_async ? " async" : ""}${active.has(d.id) ? " pulsing" : ""}`);
   nodeSel.select("rect.body").attr("width", nodeW).attr("x", d => -nodeW(d) / 2);
   nodeSel.select("rect.status")
     .attr("x", d => -nodeW(d) / 2).attr("height", NH).attr("y", -NH / 2)
@@ -696,12 +853,12 @@ function update() {
   nodeSel.select("text.lat")
     .each(function (d) {
       const sel = d3.select(this);
-      const last = fmtMs(d.last_ms);
-      const avg = fmtMs(d.avg_ms);
+      const last = fmtDuration(d.last_ms);
+      const avg = fmtDuration(d.avg_ms);
       sel.text("");
       if (last != null) {
-        sel.append("tspan").text(`${last} ms`);
-        if (avg != null && avg !== last) sel.append("tspan").attr("class", "avg").text(` [${avg}]`);
+        sel.append("tspan").text(last);
+        if (avg != null && avg !== last) sel.append("tspan").attr("class", "avg").text(` · avg ${avg}`);
       }
     })
     .attr("x", d => nodeW(d) / 2 - 10)
@@ -716,7 +873,8 @@ function update() {
   linkSel = linkJoin.enter().append("path")
     .attr("class", "link")
     .merge(linkJoin)
-    .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
+    .attr("class", d => `link ${d.metadata?.phase || "handoff"}`)
+    .attr("marker-end", d => `url(#arrow-${d.metadata?.phase === "exception" ? "exception" : payloadCategory(d.payload)})`)
     .style("stroke", edgeStroke)
     .attr("stroke-width", 1.5)
     .style("cursor", "pointer");
@@ -794,10 +952,16 @@ function directCardPoint(node, dx, dy, pad) {
 
 function directRoute(d) {
   const s = d.source, t = d.target;
-  const dx = t.x - s.x, dy = t.y - s.y;
-  if (Math.hypot(dx, dy) < 0.001) return { path: `M${s.x},${s.y}L${t.x},${t.y}`, x: s.x, y: s.y };
-  const start = directCardPoint(s, dx, dy, ROUTE.sourcePad);
-  const end = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
+  const dx = t.x - s.x, dy = t.y - s.y, length = Math.hypot(dx, dy);
+  if (length < 0.001) return { path: `M${s.x},${s.y}L${t.x},${t.y}`, x: s.x, y: s.y };
+  // Parallel straight rails: reverse travel reverses the normal, putting a
+  // return on the opposite side without curves or simulation-dependent force.
+  const lane = 8;
+  const nx = (-dy / length) * lane, ny = (dx / length) * lane;
+  const rawStart = directCardPoint(s, dx, dy, ROUTE.sourcePad);
+  const rawEnd = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
+  const start = { x: rawStart.x + nx, y: rawStart.y + ny };
+  const end = { x: rawEnd.x + nx, y: rawEnd.y + ny };
   return { path: `M${start.x},${start.y}L${end.x},${end.y}`, x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
 }
 
@@ -807,10 +971,15 @@ function linkRoute(d) {
   const dx = t.x - s.x, dy = t.y - s.y;
   const sx = direction(dx, d._idx % 2 ? -1 : 1);
   const sy = direction(dy, d._idx % 2 ? -1 : 1);
-  const hStart = { x: s.x + sx * (sw + ROUTE.sourcePad), y: s.y };
-  const hEnd = { x: t.x - sx * (tw + ROUTE.targetPad), y: t.y };
-  const vStart = { x: s.x, y: s.y + sy * (hh + ROUTE.sourcePad) };
-  const vEnd = { x: t.x, y: t.y - sy * (hh + ROUTE.targetPad) };
+  // A direction-relative rail makes reciprocal entry/return handoffs run on
+  // opposite physical sides while preserving the selected orthogonal mode.
+  const lane = 12;
+  const hLane = sx * lane;
+  const vLane = -sy * lane;
+  const hStart = { x: s.x + sx * (sw + ROUTE.sourcePad), y: s.y + hLane };
+  const hEnd = { x: t.x - sx * (tw + ROUTE.targetPad), y: t.y + hLane };
+  const vStart = { x: s.x + vLane, y: s.y + sy * (hh + ROUTE.sourcePad) };
+  const vEnd = { x: t.x + vLane, y: t.y - sy * (hh + ROUTE.targetPad) };
   const hClearance = (hEnd.x - hStart.x) * sx;
   const vClearance = (vEnd.y - vStart.y) * sy;
   const turnClearance = ROUTE.approach + ROUTE.corner;
@@ -948,10 +1117,10 @@ function renderDetails(d) {
   det.append("div").attr("class", "drow").html(`<span class="k">module</span><span class="v">${d.module || d.category || ""}</span>`);
   det.append("div").attr("class", "drow").html(`<span class="k">calls</span><span class="v">${d.calls || 0}×</span>`);
   if (d.last_ms != null) {
-    const avg = d.avg_ms != null && fmtMs(d.avg_ms) !== fmtMs(d.last_ms) ? ` · avg ${fmtMs(d.avg_ms)} ms` : "";
-    det.append("div").attr("class", "drow").html(`<span class="k">latency</span><span class="v">${fmtMs(d.last_ms)} ms${avg}</span>`);
+    const avg = d.avg_ms != null && fmtDuration(d.avg_ms) !== fmtDuration(d.last_ms) ? ` · avg ${fmtDuration(d.avg_ms)}` : "";
+    det.append("div").attr("class", "drow").html(`<span class="k">latency</span><span class="v">${fmtDuration(d.last_ms)}${avg}</span>`);
   }
-  det.append("div").attr("class", "drow").html(`<span class="k">kind</span><span class="v">${d.is_async ? "async" : "sync"}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">kind</span><span class="v">${d.is_root ? "trace root" : d.is_async ? "async" : "sync"}</span>`);
   const st = active.has(d.id) ? (d.is_async ? "async waiting" : "sync busy") : "idle / done";
   det.append("div").attr("class", "drow").html(`<span class="k">status</span><span class="v">${st}</span>`);
   if (d.tags && d.tags.length) {
@@ -960,15 +1129,113 @@ function renderDetails(d) {
     const tagBox = tagRow.append("span").attr("class", "v");
     tagBox.selectAll("span.tag-chip").data(d.tags).join("span").attr("class", "tag-chip").text(tag => tag);
   }
-  const inb = linkData.filter(l => (l.target.id || l.target) === d.id);
-  const outb = linkData.filter(l => (l.source.id || l.source) === d.id);
+  const invocations = (loadData().invocations || []).filter(invocation => invocation.node_id === d.id);
   const box = det.append("div").attr("class", "edges");
-  box.append("div").attr("class", "drow").html(`<span class="k">in (${inb.length})</span><span class="v"></span>`);
-  inb.forEach(l => box.append("div").attr("class", "edge-line")
-    .html(`${(nodeByIdNow(l.source.id || l.source)?.name) || (l.source.id || l.source)} <span class="arr">→</span> ${d.name} · ${l.payload || ""}`));
-  box.append("div").attr("class", "drow").html(`<span class="k">out (${outb.length})</span><span class="v"></span>`);
-  outb.forEach(l => box.append("div").attr("class", "edge-line")
-    .html(`${d.name} <span class="arr">→</span> ${(nodeByIdNow(l.target.id || l.target)?.name) || (l.target.id || l.target)} · ${l.payload || ""}`));
+  box.append("div").attr("class", "drow").html(`<span class="k">calls</span><span class="v">${invocations.length} observed</span>`);
+  if (!invocations.length) {
+    box.append("p").attr("class", "invocation-hint").text("No invocation details were recorded for this node.");
+    return;
+  }
+  box.append("p").attr("class", "invocation-hint").text("Expand a call, then expand its inputs or output.");
+  const calls = box.append("div").attr("class", "invocation-list");
+  invocations.forEach((invocation, index) => {
+    const card = calls.append("section").attr("class", "invocation-card");
+    const toggle = card.append("button").attr("type", "button").attr("class", "invocation-toggle");
+    toggle.append("span").attr("class", "chevron").text("▶");
+    toggle.append("span").attr("class", "call-summary").text(`Call #${index + 1}`);
+    const callState = invocation.exception ? "failed" : invocation.duration_ms == null ? "running" : fmtDuration(invocation.duration_ms);
+    toggle.append("span").attr("class", "call-meta").text(callState);
+    toggle.on("click", function () {
+      const button = d3.select(this);
+      const existing = card.select("div.invocation-body");
+      if (!existing.empty()) {
+        existing.remove();
+        button.select(".chevron").text("▶");
+        return;
+      }
+      button.select(".chevron").text("▼");
+      const body = card.append("div").attr("class", "invocation-body invocation-io");
+      appendInvocationPayloadToggle(body, invocation, "Inputs", "arguments");
+      appendInvocationPayloadToggle(body, invocation, invocation.exception ? "Exception" : "Output", invocation.exception ? "exception" : "result");
+    });
+  });
+}
+
+const invocationPayloadCache = new Map();
+function renderPayload(pre, payloadText) {
+  const text = String(payloadText || "null");
+  const token = /"(?:\\.|[^"\\])*"|\btrue\b|\bfalse\b|\bnull\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g;
+  let cursor = 0;
+  for (const match of text.matchAll(token)) {
+    pre.append(document.createTextNode(text.slice(cursor, match.index)));
+    const value = match[0];
+    const following = text.slice(match.index + value.length);
+    const kind = value.startsWith('"')
+      ? (/^\s*:/.test(following) ? "json-key" : "json-string")
+      : value === "true" || value === "false" ? "json-boolean"
+      : value === "null" ? "json-null" : "json-number";
+    const span = document.createElement("span");
+    span.className = kind;
+    span.textContent = value;
+    pre.append(span);
+    cursor = match.index + value.length;
+  }
+  pre.append(document.createTextNode(text.slice(cursor)));
+}
+async function expandInvocation(body, invocationId, payloadField) {
+  const detail = body.append("pre").attr("class", "value").text("Loading captured payload…");
+  if (!LIVE) {
+    detail.text("Full payload is available only in the live viewer.");
+    return;
+  }
+  try {
+    let payload = invocationPayloadCache.get(invocationId);
+    if (!payload) {
+      const response = await fetch(`/invocations/${encodeURIComponent(selectedTraceId)}/${encodeURIComponent(invocationId)}/payload`);
+      if (!response.ok) {
+        detail.text(await response.text());
+        return;
+      }
+      payload = await response.json();
+      invocationPayloadCache.set(invocationId, payload);
+    }
+    detail.text("");
+    renderPayload(detail.node(), payload[payloadField] || "null");
+  } catch {
+    detail.text("Could not load the retained payload.");
+  }
+}
+
+function appendInvocationPayloadToggle(container, invocation, label, payloadField) {
+  const section = container.append("section").attr("class", "io-section");
+  const toggle = section.append("button").attr("type", "button").attr("class", "io-toggle");
+  toggle.append("span").attr("class", "chevron").text("▶");
+  toggle.append("span").text(label);
+  toggle.append("span").attr("class", "io-meta").text(
+    payloadField === "result" ? (invocation.result_type || "empty") :
+    payloadField === "exception" ? "error" :
+    `${invocation.arguments.length} parameter${invocation.arguments.length === 1 ? "" : "s"}`
+  );
+  toggle.on("click", function () {
+    const button = d3.select(this);
+    const existing = section.select("div.io-payload");
+    if (!existing.empty()) {
+      existing.remove();
+      button.select(".chevron").text("▶");
+      return;
+    }
+    button.select(".chevron").text("▼");
+    const payload = section.append("div").attr("class", "io-payload");
+    if (payloadField === "exception") {
+      payload.append("pre").attr("class", "value").text(invocation.exception || "Unknown error");
+    } else if (invocation.payload_state === "disabled") {
+      payload.append("div").attr("class", "invocation-hint").text("Full values were not captured. Set PYLIER_CAPTURE_VALUES=1 for a future run.");
+    } else if (invocation.payload_state === "evicted") {
+      payload.append("div").attr("class", "invocation-hint").text("Full payload was evicted by the configured retention limit.");
+    } else {
+      expandInvocation(payload, invocation.id, payloadField);
+    }
+  });
 }
 
 function renderEdgeDetails(l) {
@@ -982,14 +1249,65 @@ function renderEdgeDetails(l) {
   det.append("div").attr("class", "drow").html(`<span class="k">color</span><span class="v">${payloadCategory(l.payload)}</span>`);
   if (l.size != null) det.append("div").attr("class", "drow").html(`<span class="k">size</span><span class="v">${l.size}</span>`);
   det.append("div").attr("class", "drow").html(`<span class="k">count</span><span class="v">${l.count || 1}×</span>`);
-  if (l.value != null) {
+  if (l.handoffs?.length) {
+    det.append("div").attr("class", "drow").html(`<span class="k">calls</span><span class="v">${l.handoffs.length} observed</span>`);
+    det.append("p").attr("class", "invocation-hint").text("Expand a call to load the payload represented by this edge.");
+    const invocationById = new Map((loadData().invocations || []).map(invocation => [invocation.id, invocation]));
+    const calls = det.append("div").attr("class", "invocation-list");
+    l.handoffs.forEach((handoff, index) => {
+      const isReturn = l.metadata?.phase === "return" || handoff.provenance === "return";
+      const payloadField = isReturn ? "result" : "arguments";
+      const invocationId = isReturn
+        ? (handoff.invocation_id || handoff.producer_invocation_id)
+        : (handoff.consumer_invocation_id || handoff.invocation_id);
+      const invocation = invocationById.get(invocationId);
+      const label = isReturn ? "Return value" : "Arguments";
+      const summary = isReturn ? "" : (handoff.arguments?.join(", ") || handoff.parameter || "arguments");
+      const duration = invocation?.duration_ms == null ? "pending" : fmtDuration(invocation.duration_ms);
+      const type = isReturn ? (invocation?.result_type || l.payload || "unknown") : (l.payload || "unknown");
+      const card = calls.append("section").attr("class", "invocation-card");
+      const toggle = card.append("button").attr("type", "button").attr("class", "invocation-toggle");
+      toggle.append("span").attr("class", "chevron").text("▶");
+      toggle.append("span").attr("class", "call-summary").text(
+        summary ? `${label} #${index + 1} · ${summary}` : `${label} #${index + 1}`
+      );
+      toggle.append("span").attr("class", "call-meta").text(`${type} · ${duration}`);
+      if (!invocationId) {
+        toggle.attr("disabled", true).attr("title", "No invocation detail is available for this relation.");
+        return;
+      }
+      toggle.on("click", function () {
+        const button = d3.select(this);
+        const existing = card.select("div.invocation-body");
+        if (!existing.empty()) {
+          existing.remove();
+          button.select(".chevron").text("▶");
+          return;
+        }
+        button.select(".chevron").text("▼");
+        const body = card.append("div").attr("class", "invocation-body");
+        if (invocation?.payload_state === "disabled") {
+          body.append("div").attr("class", "invocation-hint").text("Full values were not captured. Set PYLIER_CAPTURE_VALUES=1 for a future run.");
+        } else if (invocation?.payload_state === "evicted") {
+          body.append("div").attr("class", "invocation-hint").text("Full payload was evicted by the configured retention limit.");
+        } else {
+          expandInvocation(body, invocationId, payloadField);
+        }
+      });
+    });
+  }
+  if (l.value != null && !l.handoffs?.length) {
     det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.value);
-  } else if (l.preview != null) {
+  } else if (l.preview != null && !l.handoffs?.length) {
     det.append("div").attr("class", "drow").html(`<span class="k">preview</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.preview);
-  } else {
-    det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"><i>not captured — set PYLIER_CAPTURE_VALUES=1 or run at level "debug" for a preview</i></span>`);
+  } else if (!l.handoffs?.length && l.metadata?.phase === "return" && l.payload && l.payload !== "unknown") {
+    det.append("div").attr("class", "drow").html(`<span class="k">return value</span><span class="v"><i>summary captured; set PYLIER_CAPTURE_VALUES=1 for the full value</i></span>`);
+  } else if (!l.handoffs?.length && l.payload === "empty") {
+    det.append("div").attr("class", "drow").html(`<span class="k">payload</span><span class="v"><i>none — this is an execution relationship, not moved data</i></span>`);
+  } else if (!l.handoffs?.length) {
+    det.append("div").attr("class", "value").html(`<span class="k">value</span><span class="v"><i>not captured — set PYLIER_CAPTURE_VALUES=1 or run at level "debug" for a preview</i></span>`);
   }
 }
 
@@ -1024,6 +1342,12 @@ d3.select("#b-reset").on("click", () => {
 d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
 d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
 d3.selectAll('input[name="edge-mode"]').on("change", e => setEdgeMode(e.target.value));
+d3.selectAll('input[name="perspective"]').on("change", e => {
+  state.perspective = e.target.value === "data" ? "data" : "application";
+  state.selected = null;
+  active.clear();
+  update();
+});
 d3.selectAll('input[name="tag-mode"]').on("change", e => { state.tagMode = e.target.value; update(); });
 
 const main = document.getElementById("main");
@@ -1038,11 +1362,18 @@ function resizeGraph() {
   sim.force("center", d3.forceCenter(w / 2, h / 2));
   sim.alpha(0.1).restart();
 }
-function setFilterCollapsed(collapsed, persist = true) {
-  main.classList.toggle("filters-collapsed", collapsed);
-  filters.classList.toggle("filter-collapsed", collapsed);
-  document.getElementById("b-filters").textContent = collapsed ? "›" : "‹";
-  if (persist) try { localStorage.setItem("pylier-filters-collapsed", String(collapsed)); } catch { /* private mode */ }
+function setSectionCollapsed(element, button, collapsed, persistKey, persist = true) {
+  element.classList.toggle("section-collapsed", collapsed);
+  button.textContent = collapsed ? "⌄" : "⌃";
+  if (persist) try { localStorage.setItem(persistKey, String(collapsed)); } catch { /* private mode */ }
+}
+function setLeftCollapsed(collapsed, persist = true) {
+  main.classList.toggle("left-collapsed", collapsed);
+  const button = document.getElementById("b-left");
+  button.textContent = collapsed ? "›" : "‹";
+  button.title = collapsed ? "Show selectors" : "Collapse selectors";
+  button.setAttribute("aria-label", button.title);
+  if (persist) try { localStorage.setItem("pylier-left-collapsed", String(collapsed)); } catch { /* private mode */ }
   setTimeout(resizeGraph, 0);
 }
 function setSidebarCollapsed(collapsed, persist = true) {
@@ -1058,18 +1389,50 @@ function setSidebarWidth(width, persist = true) {
   if (persist) try { localStorage.setItem("pylier-sidebar-width", String(bounded)); } catch { /* private mode */ }
   resizeGraph();
 }
+function setConsoleHeight(height, persist = true) {
+  const maxHeight = Math.max(110, footer.parentElement.clientHeight - 100);
+  const bounded = Math.max(110, Math.min(maxHeight, height));
+  footer.style.flexBasis = `${bounded}px`;
+  if (persist) try { localStorage.setItem("pylier-console-height", String(bounded)); } catch { /* private mode */ }
+  resizeGraph();
+}
 function setConsoleCollapsed(collapsed, persist = true) {
   footer.classList.toggle("console-open", !collapsed);
+  if (collapsed) {
+    footer.style.removeProperty("flex-basis");
+  } else if (Number.isFinite(savedConsoleHeight)) {
+    setConsoleHeight(savedConsoleHeight, false);
+  }
   eventConsole.hidden = collapsed;
   consoleToggle.setAttribute("aria-expanded", String(!collapsed));
   consoleToggle.textContent = collapsed ? "SSE console ▲" : "SSE console ▼";
   if (persist) try { localStorage.setItem("pylier-console-collapsed", String(collapsed)); } catch { /* private mode */ }
   setTimeout(resizeGraph, 0);
 }
-d3.select("#b-filters").on("click", () => setFilterCollapsed(!filters.classList.contains("filter-collapsed")));
+d3.select("#b-left").on("click", () => setLeftCollapsed(!main.classList.contains("left-collapsed")));
+d3.select("#b-traces").on("click", () => setSectionCollapsed(document.getElementById("selector-traces"), document.getElementById("b-traces"), !document.getElementById("selector-traces").classList.contains("section-collapsed"), "pylier-traces-collapsed"));
+d3.select("#b-filters").on("click", () => setSectionCollapsed(filters, document.getElementById("b-filters"), !filters.classList.contains("section-collapsed"), "pylier-filters-collapsed"));
 d3.select("#b-sidebar").on("click", () => setSidebarCollapsed(!sidebar.classList.contains("sidebar-collapsed")));
 d3.select("#b-console").on("click", () => setConsoleCollapsed(!eventConsole.hidden));
 d3.select("#b-console-clear").on("click", () => { sseLog.length = 0; pendingSseLog.length = 0; renderSseLog(); });
+const consoleResizeHandle = document.getElementById("console-resize");
+consoleResizeHandle.addEventListener("pointerdown", event => {
+  event.preventDefault();
+  consoleResizeHandle.classList.add("dragging");
+  consoleResizeHandle.setPointerCapture(event.pointerId);
+  const move = pointerEvent => {
+    const bounds = footer.parentElement.getBoundingClientRect();
+    setConsoleHeight(bounds.bottom - pointerEvent.clientY, false);
+  };
+  const end = () => {
+    consoleResizeHandle.classList.remove("dragging");
+    try { localStorage.setItem("pylier-console-height", String(footer.offsetHeight)); } catch { /* private mode */ }
+    consoleResizeHandle.removeEventListener("pointermove", move);
+    consoleResizeHandle.removeEventListener("pointerup", end);
+  };
+  consoleResizeHandle.addEventListener("pointermove", move);
+  consoleResizeHandle.addEventListener("pointerup", end);
+});
 const resizeHandle = document.getElementById("sidebar-resize");
 resizeHandle.addEventListener("pointerdown", event => {
   event.preventDefault();
@@ -1092,7 +1455,7 @@ function applyTheme(t) {
   buildMarkers();
   syncGradients(linkData);
   if (linkSel) linkSel
-    .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
+    .attr("marker-end", d => `url(#arrow-${d.metadata?.phase === "exception" ? "exception" : payloadCategory(d.payload)})`)
     .style("stroke", edgeStroke);
 }
 const savedTheme = (() => { try { return localStorage.getItem("pylier-theme") || "dark"; } catch { return "dark"; } })();
@@ -1103,12 +1466,22 @@ const savedSidebarWidth = (() => {
     return stored === null ? NaN : Number(stored);
   } catch { return NaN; }
 })();
+const savedLeftCollapsed = (() => { try { return localStorage.getItem("pylier-left-collapsed") === "true"; } catch { return false; } })();
+const savedTracesCollapsed = (() => { try { return localStorage.getItem("pylier-traces-collapsed") === "true"; } catch { return false; } })();
 const savedFiltersCollapsed = (() => { try { return localStorage.getItem("pylier-filters-collapsed") === "true"; } catch { return false; } })();
 const savedSidebarCollapsed = (() => { try { return localStorage.getItem("pylier-sidebar-collapsed") === "true"; } catch { return false; } })();
 const savedConsoleCollapsed = (() => { try { return localStorage.getItem("pylier-console-collapsed") !== "false"; } catch { return true; } })();
+const savedConsoleHeight = (() => {
+  try {
+    const stored = localStorage.getItem("pylier-console-height");
+    return stored === null ? NaN : Number(stored);
+  } catch { return NaN; }
+})();
 if (Number.isFinite(savedSidebarWidth)) setSidebarWidth(savedSidebarWidth, false);
 setEdgeMode(savedEdgeMode, false);
-setFilterCollapsed(savedFiltersCollapsed, false);
+setLeftCollapsed(savedLeftCollapsed, false);
+setSectionCollapsed(document.getElementById("selector-traces"), document.getElementById("b-traces"), savedTracesCollapsed, "pylier-traces-collapsed", false);
+setSectionCollapsed(filters, document.getElementById("b-filters"), savedFiltersCollapsed, "pylier-filters-collapsed", false);
 setSidebarCollapsed(savedSidebarCollapsed, false);
 setConsoleCollapsed(savedConsoleCollapsed, false);
 renderSseLog();

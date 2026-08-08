@@ -14,6 +14,112 @@ import pylier
 from pylier.model import Level, Node, Trace
 
 
+def test_trace_root_captures_nested_argument_and_return_handoffs(monkeypatch):
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    from pylier.config import reload_settings
+
+    reload_settings()
+
+    @pylier.node
+    def f1():
+        return None
+
+    @pylier.node
+    def f2(a: int, b: str) -> str:
+        f1()
+        return f"{a} {b}"
+
+    try:
+        with pylier.trace("main") as trace:
+            f2(42, "hello")
+    finally:
+        monkeypatch.delenv("PYLIER_CAPTURE_VALUES")
+        reload_settings()
+
+    root_id = trace.root_node_id
+    f1_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("f1"))
+    f2_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("f2"))
+    handoffs = {(edge.source, edge.target): edge for edge in trace.edges.values()}
+    assert json.loads(handoffs[root_id, f2_id].value) == {"a": 42, "b": "hello"}
+    assert handoffs[f2_id, f1_id].payload_type == "empty"
+    assert handoffs[f1_id, f2_id].payload_type == "empty"
+    assert json.loads(handoffs[f2_id, root_id].value) == "42 hello"
+
+
+def test_node_call_count_includes_first_invocation():
+    @pylier.node
+    def repeat(value: int) -> int:
+        return value
+
+    with pylier.trace() as trace:
+        repeat(1)
+        repeat(2)
+        repeat(3)
+
+    node = next(node for node in trace.nodes.values() if node.name.endswith("repeat"))
+    assert node.calls == 3
+    assert len(trace.invocations) == 3
+
+
+def test_nested_calls_prefer_direct_caller_handoffs_over_fingerprint_lineage():
+    @pylier.node
+    def extract_text():
+        return ["document"]
+
+    @pylier.node
+    def extract_image_text():
+        return ["image"]
+
+    @pylier.node
+    def embed(chunks: list[str]) -> list[str]:
+        return chunks
+
+    @pylier.node
+    def index(document_text: list[str], image_text: list[str]) -> int:
+        return len(embed(document_text)) + len(embed(image_text))
+
+    with pylier.trace() as trace:
+        index(extract_text(), extract_image_text())
+
+    node_ids = {node.name.rsplit(".", 1)[-1]: node_id for node_id, node in trace.nodes.items()}
+    assert (node_ids["extract_text"], node_ids["embed"]) not in trace.edges
+    assert (node_ids["extract_image_text"], node_ids["embed"]) not in trace.edges
+    embed_inputs = trace.edges[node_ids["index"], node_ids["embed"]]
+    assert embed_inputs.count == 2
+    assert len(embed_inputs.handoffs) == 2
+    assert len({handoff["invocation_id"] for handoff in embed_inputs.handoffs}) == 2
+    # Data Flow restores lineage without changing the invocation graph.
+    assert (node_ids["extract_text"], node_ids["embed"]) in trace.data_edges
+    assert (node_ids["extract_image_text"], node_ids["embed"]) in trace.data_edges
+    assert (node_ids["embed"], node_ids["index"]) in trace.data_edges
+
+
+def test_data_flow_keeps_producer_consumer_lineage_separate_from_application_flow():
+    @pylier.node
+    def load_document():
+        return {"pages": ["one"]}
+
+    @pylier.node
+    def extract_text(document):
+        return document["pages"]
+
+    with pylier.trace("lineage") as trace:
+        extract_text(load_document())
+
+    ids = {node.name.rsplit(".", 1)[-1]: node_id for node_id, node in trace.nodes.items()}
+    # Top-level invocation belongs to the orchestration root, not its producer.
+    assert (trace.root_node_id, ids["extract_text"]) in trace.edges
+    assert (ids["load_document"], ids["extract_text"]) not in trace.edges
+
+    data_edge = trace.data_edges[ids["load_document"], ids["extract_text"]]
+    assert data_edge.payload_type == "dict"
+    assert data_edge.handoffs[0]["parameter"] == "document"
+    assert data_edge.handoffs[0]["provenance"] == "fingerprint"
+    graph = trace.to_graph_dict()
+    assert graph["links"] != graph["perspectives"]["data"]["links"]
+    assert graph["perspectives"]["data"]["links"][0]["source"] == ids["load_document"]
+
+
 def test_sync_edge_inferred_from_returned_value():
     @pylier.node
     def producer():
@@ -29,9 +135,9 @@ def test_sync_edge_inferred_from_returned_value():
     assert out == "hello"
     ids = list(tr.nodes)
     assert len(ids) == 2
-    assert len(tr.edges) == 1
-    (src, tgt), edge = next(iter(tr.edges.items()))
-    assert src.endswith("producer")
+    assert len(tr.edges) == 4
+    (src, tgt), edge = next(item for item in tr.edges.items() if item[0][1].endswith("consumer"))
+    assert src == tr.root_node_id
     assert tgt.endswith("consumer")
     assert edge.payload_type == "dict"
 
@@ -58,12 +164,8 @@ def test_derive_infers_multiple_sources_for_a_computed_value():
         index_document(document)
 
     index_node_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("index_document"))
-    inbound_source_names = {
-        trace.nodes[source_id].name.rsplit(".", 1)[-1]
-        for source_id, target_id in trace.edges
-        if target_id == index_node_id
-    }
-    assert inbound_source_names == {"load_title", "load_body"}
+    inbound_sources = {source_id for source_id, target_id in trace.edges if target_id == index_node_id}
+    assert inbound_sources == {trace.root_node_id}
 
 
 def test_derive_preserves_transitive_lineage_and_deduplicates_sources():
@@ -88,11 +190,8 @@ def test_derive_preserves_transitive_lineage_and_deduplicates_sources():
 
     index_node_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("index_document"))
     inbound_edges = [edge for edge in trace.edges.values() if edge.target == index_node_id]
-    assert {trace.nodes[edge.source].name.rsplit(".", 1)[-1] for edge in inbound_edges} == {
-        "load_title",
-        "load_body",
-    }
-    assert all(edge.count == 1 for edge in inbound_edges)
+    assert [edge.source for edge in inbound_edges] == [trace.root_node_id]
+    assert inbound_edges[0].count == 1
 
 
 def test_derive_warns_and_keeps_known_sources_when_a_source_is_untraced():
@@ -110,10 +209,9 @@ def test_derive_warns_and_keeps_known_sources_when_a_source_is_untraced():
             document = pylier.derive(title + " external", from_=[title, " external"])
         index_document(document)
 
-    assert len(trace.edges) == 1
-    edge = next(iter(trace.edges.values()))
-    assert trace.nodes[edge.source].name.endswith("load_title")
-    assert trace.nodes[edge.target].name.endswith("index_document")
+    assert len(trace.edges) == 4
+    edge = next(edge for edge in trace.edges.values() if edge.target.endswith("index_document"))
+    assert edge.source == trace.root_node_id
 
 
 def test_derive_rejects_a_single_string_as_the_source_iterable():
@@ -162,7 +260,7 @@ def test_heterogeneous_tuple_records_member_types_for_rendering():
     with pylier.trace() as tr:
         handle(emit())
 
-    edge = next(iter(tr.edges.values()))
+    edge = next(edge for edge in tr.edges.values() if edge.target.endswith("handle"))
     assert edge.payload_type == "tuple"
     assert edge.payload_types == ("bool", "int", "str")
 
@@ -189,8 +287,9 @@ def test_string_and_binary_edges_are_serialized_without_tags():
         handle_binary(emit_binary())
 
     graph = tr.to_graph_dict()
-    assert {edge["payload"] for edge in graph["links"]} == {"str", "bytes"}
-    assert all(edge["payload_types"] == [] for edge in graph["links"])
+    assert {"str", "bytes"} <= {edge["payload"] for edge in graph["links"]}
+    typed_edges = [edge for edge in graph["links"] if edge["payload"] in {"str", "bytes"}]
+    assert all(edge["payload_types"] == [] for edge in typed_edges)
     assert all("tags" not in edge for edge in graph["links"])
 
 
@@ -216,10 +315,15 @@ def test_branching_pipeline_inferred():
         merge(branch_a(raw), branch_b(raw))
 
     assert len(tr.nodes) == 4
-    # load -> a, load -> b, a -> merge, b -> merge
-    assert len(tr.edges) == 4
-    targets_of_load = {tgt for (src, tgt), e in tr.edges.items() if src.endswith("load")}
-    assert {t.rsplit(".", 1)[-1] for t in targets_of_load} == {"branch_a", "branch_b"}
+    # The trace root owns top-level orchestration; no stage claims to call another.
+    assert len(tr.edges) == 8
+    root_targets = {tgt for (src, tgt) in tr.edges if src == tr.root_node_id}
+    assert {tr.nodes[target].name.rsplit(".", 1)[-1] for target in root_targets} == {
+        "load",
+        "branch_a",
+        "branch_b",
+        "merge",
+    }
 
 
 def test_async_node_infers_edge():
@@ -239,8 +343,8 @@ def test_async_node_infers_edge():
 
     result, tr = asyncio.run(run())
     assert result == 6
-    assert len(tr.edges) == 1
-    assert next(iter(tr.edges.values())).payload_type == "list"
+    assert len(tr.edges) == 4
+    assert next(edge for edge in tr.edges.values() if edge.target.endswith("summarize")).payload_type == "list"
 
 
 def test_level_filters_uncaptured_nodes():
@@ -307,8 +411,8 @@ def test_render_writes_self_contained_html(tmp_path: Path):
         i += 1
     graph = json.loads(html[obj_start : i + 1])
     assert graph["name"] == "render-test"
-    assert len(graph["nodes"]) == 2
-    assert len(graph["links"]) == 1
+    assert len(graph["nodes"]) == 3
+    assert len(graph["links"]) == 4
     assert "TYPE_COLOR" in html
     assert "tag-options" in html
     assert "--edge-glow-alpha" in html
@@ -317,6 +421,10 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "sim.alpha(prevNodeIds.size ? 0.12 : 0.65).restart()" in html
     assert "trace-start" in html
     assert "traceStartNode" in html
+    assert "nodes.find(node => node.is_root)" in html
+    assert "Selectors" in html
+    assert "Traces" in html
+    assert "Filters" in html
     assert 'name="edge-mode"' in html
     assert "directRoute" in html
     assert 'state.edgeMode === "direct" ? directRoute(d) : linkRoute(d)' in html
@@ -422,7 +530,7 @@ def test_size_and_preview_captured_at_debug():
     with pylier.set_level("debug"), pylier.trace() as tr:
         consume(produce())
 
-    edge = next(iter(tr.edges.values()))
+    edge = next(edge for edge in tr.edges.values() if edge.target.endswith("consume"))
     assert edge.size == 3
     assert edge.preview is not None
 
@@ -460,6 +568,34 @@ def test_value_not_captured_by_default():
     assert edge.value is None
 
 
+def test_full_invocation_payloads_are_fifo_bounded(monkeypatch):
+    from pylier.config import reload_settings
+
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    monkeypatch.setenv("PYLIER_PAYLOAD_MAX_INVOCATIONS", "1")
+    reload_settings()
+    try:
+
+        @pylier.node
+        def produce(value: str):
+            return {"full": value * 3000}
+
+        with pylier.trace() as trace:
+            produce("first")
+            produce("second")
+
+        first, second = list(trace.invocations)
+        assert trace.invocation_payload(first)[0] == "evicted"
+        state, payload = trace.invocation_payload(second)
+        assert state == "available"
+        assert payload is not None
+        assert "second" * 3000 in payload["result"]
+    finally:
+        monkeypatch.delenv("PYLIER_CAPTURE_VALUES")
+        monkeypatch.delenv("PYLIER_PAYLOAD_MAX_INVOCATIONS")
+        reload_settings()
+
+
 def test_value_captured_when_enabled(monkeypatch):
     from pylier.config import get_settings, reload_settings
 
@@ -478,7 +614,7 @@ def test_value_captured_when_enabled(monkeypatch):
         with pylier.trace() as tr:
             consume(produce())
 
-        edge = next(iter(tr.edges.values()))
+        edge = next(edge for edge in tr.edges.values() if edge.target.endswith("consume"))
         assert edge.value is not None
         payload = json.loads(edge.value)
         assert payload == {"doc": "hello", "n": 2}
@@ -504,7 +640,7 @@ def test_binary_payload_truncated(monkeypatch):
         with pylier.trace() as tr:
             consume(produce())
 
-        edge = next(iter(tr.edges.values()))
+        edge = next(edge for edge in tr.edges.values() if edge.target.endswith("consume"))
         assert edge.value is not None
         assert edge.value.startswith("<bytes 5000 bytes:")
         assert len(edge.value) < 200  # truncated summary, never raw
@@ -531,7 +667,7 @@ def test_events_timeline_and_edge_handoffs():
     assert consume_enter.kind == "enter"
     assert len(consume_enter.edges) == 1
     fired = consume_enter.edges[0]
-    assert fired["source"].endswith("produce")
+    assert fired["source"] == tr.root_node_id
     assert fired["target"].endswith("consume")
     # timeline is in the graph dict for static replay
     graph = tr.to_graph_dict()

@@ -45,18 +45,18 @@ tooling without an explicit decision.
   pipeline. Pipeline-step-as-node / context-manager-scopes-as-node were
   rejected as either too boilerplate-y or too complex for nested/branching cases.
 
-### Edge inference = value fingerprinting (content hash)
-- On node exit, the return value is fingerprinted (`<type>:<hash>`) and
-  registered `fingerprint -> source_node`. On the next node's entry, each
-  argument is fingerprinted; a match draws an edge.
-- **Why chosen over a call-stack contextvar:** edges should represent *data
-  movement*, not call nesting. A contextvar keyed on the "current source" misses
-  data passed via storage/queues and mislinks unrelated nested calls.
-- **Accepted trade-off (know it, don't "fix" it silently):** fingerprinting is
-  content-based, so **transformed/aggregated copies don't link** (e.g.
-  `index(vecs_a + vecs_b)` won't edge from `embed`). This is intentional for
-  v0.1 to keep the API at zero. A fingerprint+contextvar *hybrid* is the planned
-  fast-follow — only add it deliberately, not as a drive-by.
+### Two graph perspectives: invocation and lineage
+- **Application Flow** is direct invocation handoff: a nested decorated call
+  receives data from its active caller, while a top-level call receives it from
+  the trace root. It never draws a fingerprint bypass edge.
+- **Data Flow** separately records fingerprint-inferred producer-to-consumer
+  relations for every decorated consumer of a matching non-empty value. It
+  hides the root and unmatched external inputs/outputs.
+- Each decorated invocation has a runtime ID. Repeated function-pair links
+  aggregate visually but retain individual handoffs for inspection in both
+  perspectives.
+- Transformed/aggregated copies require `pylier.derive(...)` to preserve
+  intentional multi-source lineage.
 
 ### Capture levels: `core < info < debug < trace`
 - Modeled on logfire's `min_level`. A node is recorded only when its declared
@@ -71,22 +71,20 @@ tooling without an explicit decision.
 - Invariant: **node level gates capture; global level gates metadata richness.**
   Don't conflate them.
 
-### Transport: logfire-style, sidecar-first, OTel-ready
+### Transport: standalone, sidecar-first
 - In-memory trace is the default (backing tests and `render()`).
-- `pylier.trace(..., sidecar=...)` writes **already-edge-resolved** events to a
-  JSONL sidecar for offline replay / cross-process consumers.
-- An **OTel receiver** that consumes logfire spans/logs is the planned
-  transport for live, cross-process tracing. It is **not built yet** — stub/plan
-  only. Don't pretend it exists.
-- **Why:** "mimic logfire" means offline file tracing first (simple, works across
-  processes/subprocesses, no server), with the live OTel path as the real-time
-  option. Resolved edges are emitted so sinks never fingerprint values.
+- `pylier.trace(..., sidecar=...)` writes resolved handoff events to a JSONL
+  sidecar for offline replay and future remote viewers.
+- pylier has no OpenTelemetry, Logfire, FastAPI, or cloud dependency. It does
+  not import or mutate another tracer's context, so those tools can run beside
+  pylier independently.
 
 ### One render core, static + live
 - `render/template.html` is the single source of truth for the graph look. Both
   static (`pylier.render()`) and live (`pylier.serve()`) use it. Static embeds
   the JSON (incl. the `events` timeline) and replays the execution animation
   once on load; live subscribes to SSE (`/events`) and re-renders in place.
+  The live viewer retains every produced trace in a left root-trace history.
 - **Why:** one look everywhere; no drift between test artifacts and live
   preview. The template also falls back to embedded JSON for `file://` opens.
 - The client keeps a **persistent force simulation + D3 join** — never tear
@@ -117,7 +115,7 @@ tooling without an explicit decision.
 
 ```
 src/pylier/
-  model.py        # Node, Edge, Event, Trace, Level — single source of truth
+  model.py        # Node, Edge, Event, Trace, TraceHistory, Level — neutral core
   fingerprint.py  # content fingerprint (type+hash) — only place values are hashed
   recorder.py     # active-trace contextvar, level gating, edge inference, @node core
   config.py       # pydantic-settings (PYLIER_*, .env): level, sidecar path, port
@@ -129,11 +127,15 @@ src/pylier/
   server.py       # stdlib threaded viewer: GET / (html) + GET /graph (json)
 tests/test_core.py
 examples/ingest.py
+examples/pseudo.py  # canonical nested-handoff example
 ```
 
 ### Load-bearing invariants (don't break these)
-- **Fingerprinting happens only in `recorder.py`** (via `fingerprint.py`). Sinks,
-  the viewer, and OTel consume *resolved* edges — never re-fingerprint.
+- **Fingerprinting happens only in `recorder.py`** (via `fingerprint.py`).
+  Sinks and the viewer consume resolved handoff edges — never fingerprint.
+- **Relation identity is `(source, target)`.** Entry arguments and exit values
+  are handoffs in opposite directions; `Edge.metadata["phase"]` is only a UI
+  hint for lane and stroke treatment.
 - **Level filtering runs before instrumentation.** Uncaptured nodes call the
   raw function with zero overhead and register nothing — otherwise they'd
   create phantom edges into captured nodes.
@@ -145,14 +147,15 @@ examples/ingest.py
 - **`render/template.html` placeholders** replaced by `render/html.py`:
   `__PYLIER_GRAPH__` (JS object), `__PYLIER_GRAPH_JSON__` (embedded fallback),
   `{{NAME}}` (header). When editing the template, keep these exact tokens.
-- **`_last_trace` reference:** `pylier.render()` / `serve()` with no explicit
-  trace render the most recently entered `with pylier.trace(...)` block, not
-  the empty default. This is why post-block `render()` "just works."
+- **`_last_trace` reference:** `pylier.render()` with no explicit trace renders
+  the most recently entered `with pylier.trace(...)` block, not the empty
+  default. `pylier.serve()` with no explicit trace renders the retained history
+  (newest trace selected); pass `trace=` to limit the live viewer to one run.
 
 ## Dev environment
 
 - This is a **uv** project. Never use raw `pip`/`python` in a uv project.
-  - Install/sync deps: `uv sync`
+  - Install/sync deps: `uv sync` (`uv sync --group examples` for runnable web examples)
   - Run anything: `uv run <cmd>` (e.g. `uv run pytest`), never bare `python`
   - Add a dep: `uv add <pkg>` (runtime) or under `[dependency-groups].dev`
 - Python target is **3.14** (`requires-python = ">=3.14"`). PEP 695 type
@@ -196,18 +199,21 @@ examples/ingest.py
 
 - **Fingerprinting misses transformed/aggregated copies** (see edge-inference
   decision above). Document, don't silently patch.
-- The live viewer pushes the **in-memory** trace; the sidecar sink
-  writes events but the viewer doesn't yet reconstruct from a sidecar across
+- The live viewer pushes retained **in-memory** traces; the sidecar sink writes
+  events but the viewer doesn't yet reconstruct from a sidecar across
   processes. (Fast-follow: viewer tails sidecar.)
-- OTel/logfire receiver: planned, **not implemented**.
+- OTel/logfire receiver consuming exported spans: planned, **not implemented**.
+  The shipped FastAPI adapter observes only the active in-process server span.
 - Decorated-but-never-called nodes are not rendered (only called nodes appear).
-- Edge `value` capture is opt-in (`PYLIER_CAPTURE_VALUES`) and binary payloads
-  are always truncated to a summary — never embedded raw.
+- Full invocation payload capture is opt-in (`PYLIER_CAPTURE_VALUES`). Live
+  inspector expansion fetches it lazily from the local viewer; it is bounded by
+  `PYLIER_PAYLOAD_MAX_INVOCATIONS` (100) and `PYLIER_PAYLOAD_MAX_BYTES` (100
+  MiB), evicting oldest payloads first. Binary payloads are always summaries.
 
 ## Fast-follows (out of v0.1 scope — do only on request)
 
-- `tracing/otel.py`: OTel receiver consuming logfire spans/logs → graph.
+- `tracing/otel.py`: OTel receiver consuming exported/logfire spans → graph.
 - Viewer server tailing the sidecar (cross-process live preview).
-- Fingerprint + contextvar hybrid edge inference for transformed copies.
+- Richer visual expansion for the individual handoffs aggregated into one edge.
 - Rendered nodes for declared-but-uncalled `@node`s (registry exists in
   `recorder.make_meta`; wiring to render is the gap).

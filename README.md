@@ -108,6 +108,12 @@ branch lineage visible in the next decorated stage.
 - **Keep an audit trail** — `pylier.trace(..., sidecar="trace.jsonl")` writes
   already-resolved events to JSONL for offline consumers.
 
+## Coexistence with other tracers
+
+pylier has no OpenTelemetry, Logfire, FastAPI, or cloud dependency. It records
+its own local decorator traces and does not mutate ambient tracing context, so
+another tracer can instrument the same process independently.
+
 ## Development
 
 ```bash

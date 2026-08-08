@@ -31,6 +31,7 @@ from pylier.recorder import (
 )
 from pylier.recorder import (
     mark_last_trace,
+    register_trace,
     reset_trace,
     resolve_trace,
     use_trace,
@@ -113,7 +114,7 @@ def trace(name: str = "trace", *, sidecar: bool | str | Path = False):
     Yields:
         The :class:`Trace` for the block.
     """
-    t = Trace(name=name)
+    t = register_trace(Trace(name=name))
     if sidecar:
         _attach_sidecar(t, sidecar)
     mark_last_trace(t)
@@ -136,6 +137,9 @@ def render(path: str | Path = "pylier.html", trace: Trace | None = None) -> Path
     """
     if trace is None:
         trace = resolve_trace()
+        from pylier.recorder import trace_history
+
+        return render_to_file(trace, path, history=trace_history())
     return render_to_file(trace, path)
 
 

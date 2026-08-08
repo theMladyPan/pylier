@@ -1,7 +1,7 @@
 """Core data model: nodes, edges, events, traces, and capture levels.
 
 These types are the single source of truth shared by the recorder, the
-tracing backends (in-memory / sidecar / OTel receiver), and the render core.
+tracing backends (in-memory / sidecar) and the render core.
 """
 
 from __future__ import annotations
@@ -10,6 +10,8 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import IntEnum
+from time import time
+from uuid import uuid4
 
 
 class Level(IntEnum):
@@ -45,6 +47,10 @@ class Node:
     is_async: bool = False
     last_ms: float | None = None
     avg_ms: float | None = None
+    is_root: bool = False
+    # Compatibility field for older renderer payloads; core nodes are pylier nodes.
+    kind: str = "pylier"
+    is_start: bool = False
 
 
 @dataclass
@@ -63,6 +69,29 @@ class Edge:
     # full serialized payload — only populated when capture_values is on;
     # binary payloads are truncated to a summary (see fingerprint.serialize_value)
     value: str | None = None
+    # Entry/exit provenance is display metadata; every edge remains a handoff.
+    kind: str = "data"
+    metadata: dict = field(default_factory=dict)
+    # Individual execution handoffs are retained even when the graph combines
+    # repeated calls between the same two function nodes.
+    handoffs: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class Invocation:
+    """One debugger-visible decorated call, independent of aggregate edges."""
+
+    id: str
+    node_id: str
+    parent_invocation_id: str | None
+    arguments: list[str]
+    started_at: float
+    duration_ms: float | None = None
+    result_type: str | None = None
+    result_size: int | None = None
+    result_preview: str | None = None
+    exception: str | None = None
+    payload_state: str = "disabled"  # disabled | available | evicted
 
 
 @dataclass
@@ -79,6 +108,8 @@ class Event:
     kind: str  # "enter" | "exit"
     fingerprint: str | None = None
     return_type: str | None = None
+    invocation_id: str | None = None
+    parent_invocation_id: str | None = None
     # edges materialized/observed at this event: {"source","target"} pairs
     edges: list[dict[str, str]] = field(default_factory=list)
 
@@ -92,21 +123,47 @@ class Trace:
     """
 
     def __init__(self, name: str = "trace") -> None:
+        self.id = uuid4().hex
         self.name = name
+        self.root: dict[str, str | int | None] | None = None
+        self.endpoint: dict[str, str | int | None] = {"name": name, "status_code": None}
+        self.root_node_id = f"trace.{self.id}"
+        self._root_node = Node(
+            id=self.root_node_id,
+            name=name,
+            module="trace",
+            level=Level.CORE,
+            calls=1,
+            is_root=True,
+            is_start=True,
+        )
+        # Keep this collection decorator-only for backwards-compatible SDK
+        # inspection; serialization prepends the visual trace root.
         self.nodes: OrderedDict[str, Node] = OrderedDict()
+        # One directed pair represents one handoff stream. Entry and exit use
+        # opposite directions, so no relation kind is necessary.
         self.edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
+        # Fingerprint-inferred producer -> consumer relations. Kept separate
+        # from execution handoffs so each view has one unambiguous meaning.
+        self.data_edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
         self.events: list[Event] = []
+        self.invocations: OrderedDict[str, Invocation] = OrderedDict()
+        # Full values never enter graph/SSE JSON. This FIFO store exists only
+        # for lazy localhost inspector requests in the live viewer.
+        self._invocation_payloads: OrderedDict[str, tuple[dict[str, str], int]] = OrderedDict()
+        self._payload_bytes = 0
         # event sinks (e.g. SidecarBackend) notified after each resolved event.
         # Typed loosely to keep this module free of tracing-layer imports.
         self.sinks: list = []
         # fp -> source node id that produced this value. Latest producer wins
         # so a transformed-but-equal-content value still links to the most recent
         # origin, which is what callers actually consume.
-        self._fp_index: dict[str, str] = {}
+        self._fp_index: dict[str, tuple[str, str | None]] = {}
         # Derived values retain a resolved set of producer node IDs. This stays
         # fingerprint-agnostic: recorder.py computes fingerprints and passes
         # opaque keys here.
         self._derived_sources: dict[str, tuple[str, ...]] = {}
+        self._invocation_sequence = 0
         # live-change notification: two versions sharing one condition.
         # graph_version bumps only when topology changes (new node/edge) so SSE
         # pushes the full graph rarely; exec_version bumps on every enter/exit
@@ -114,16 +171,103 @@ class Trace:
         self.graph_version: int = 0
         self.exec_version: int = 0
         self._cond = threading.Condition()
+        self._listeners: list = []
+
+    def create_invocation(
+        self, invocation_id: str, node_id: str, parent_invocation_id: str | None, arguments: list[str]
+    ) -> None:
+        """Create the public metadata record for one decorated call."""
+        with self._cond:
+            self.invocations[invocation_id] = Invocation(
+                id=invocation_id,
+                node_id=node_id,
+                parent_invocation_id=parent_invocation_id,
+                arguments=arguments,
+                started_at=time(),
+            )
+
+    def complete_invocation(
+        self,
+        invocation_id: str | None,
+        *,
+        duration_ms: float | None,
+        result_type: str | None,
+        result_size: int | None,
+        result_preview: str | None,
+        exception: str | None,
+    ) -> None:
+        """Finish an invocation metadata record after return or exception."""
+        if invocation_id is None:
+            return
+        with self._cond:
+            invocation = self.invocations.get(invocation_id)
+            if invocation is None:
+                return
+            invocation.duration_ms = duration_ms
+            invocation.result_type = result_type
+            invocation.result_size = result_size
+            invocation.result_preview = result_preview
+            invocation.exception = exception
+
+    def store_invocation_payload(
+        self, invocation_id: str | None, payload: dict[str, str], max_invocations: int, max_bytes: int
+    ) -> None:
+        """Retain one full debugger payload, evicting oldest entries first."""
+        if invocation_id is None:
+            return
+        payload_bytes = sum(len(value.encode("utf-8", errors="replace")) for value in payload.values())
+        with self._cond:
+            invocation = self.invocations.get(invocation_id)
+            if invocation is None:
+                return
+            invocation.payload_state = "available"
+            if previous := self._invocation_payloads.pop(invocation_id, None):
+                self._payload_bytes -= previous[1]
+            self._invocation_payloads[invocation_id] = (payload, payload_bytes)
+            self._payload_bytes += payload_bytes
+            while self._invocation_payloads and (
+                len(self._invocation_payloads) > max_invocations or self._payload_bytes > max_bytes
+            ):
+                evicted_id, (_, evicted_bytes) = self._invocation_payloads.popitem(last=False)
+                self._payload_bytes -= evicted_bytes
+                if evicted := self.invocations.get(evicted_id):
+                    evicted.payload_state = "evicted"
+
+    def invocation_payload(self, invocation_id: str) -> tuple[str, dict[str, str] | None]:
+        """Return ``(state, payload)`` for the live lazy-inspector endpoint."""
+        with self._cond:
+            invocation = self.invocations.get(invocation_id)
+            if invocation is None:
+                return "missing", None
+            item = self._invocation_payloads.get(invocation_id)
+            return invocation.payload_state, item[0] if item is not None else None
+
+    def next_invocation_id(self) -> str:
+        """Return an ID for one recorded function invocation."""
+        with self._cond:
+            self._invocation_sequence += 1
+            return f"{self.id}:{self._invocation_sequence}"
+
+    def add_listener(self, listener) -> None:
+        """Register a callback notified whenever graph or execution data changes."""
+        with self._cond:
+            self._listeners.append(listener)
+
+    def _notify_listeners(self) -> None:
+        for listener in tuple(self._listeners):
+            listener(self)
 
     def _bump_graph(self) -> None:
         """Notify topology change (new node/edge). Caller holds ``_cond``."""
         self.graph_version += 1
         self._cond.notify_all()
+        self._notify_listeners()
 
     def _bump_exec(self) -> None:
         """Notify execution event appended. Caller holds ``_cond``."""
         self.exec_version += 1
         self._cond.notify_all()
+        self._notify_listeners()
 
     def record_event(self, event: Event) -> None:
         """Append an enter/exit event to the timeline and notify waiters."""
@@ -156,6 +300,10 @@ class Trace:
         with self._cond:
             existing = self.nodes.get(node.id)
             if existing is None:
+                # Creating the node happens on its first decorated invocation.
+                # Count that call too; otherwise node cards under-report every
+                # function by one compared with invocation metadata.
+                node.calls += 1
                 self.nodes[node.id] = node
                 self._bump_graph()
                 return node
@@ -187,15 +335,44 @@ class Trace:
         source: str,
         target: str,
         *,
-        payload_type: str,
-        size: int | None,
-        preview: str | None,
+        payload_type: str = "unknown",
+        size: int | None = None,
+        preview: str | None = None,
         payload_types: tuple[str, ...] = (),
         value: str | None = None,
+        metadata: dict | None = None,
+        handoff: dict | None = None,
+    ) -> Edge:
+        return self._add_edge_to(
+            self.edges,
+            source,
+            target,
+            payload_type=payload_type,
+            size=size,
+            preview=preview,
+            payload_types=payload_types,
+            value=value,
+            metadata=metadata,
+            handoff=handoff,
+        )
+
+    def _add_edge_to(
+        self,
+        collection: OrderedDict[tuple[str, str], Edge],
+        source: str,
+        target: str,
+        *,
+        payload_type: str = "unknown",
+        size: int | None = None,
+        preview: str | None = None,
+        payload_types: tuple[str, ...] = (),
+        value: str | None = None,
+        metadata: dict | None = None,
+        handoff: dict | None = None,
     ) -> Edge:
         with self._cond:
             key = (source, target)
-            edge = self.edges.get(key)
+            edge = collection.get(key)
             if edge is None:
                 edge = Edge(
                     source=source,
@@ -205,11 +382,15 @@ class Trace:
                     preview=preview,
                     payload_types=payload_types,
                     value=value,
+                    metadata=metadata or {},
+                    handoffs=[handoff] if handoff is not None else [],
                 )
-                self.edges[key] = edge
+                collection[key] = edge
                 self._bump_graph()
             else:
                 edge.count += 1
+                if payload_type != "unknown":
+                    edge.payload_type = payload_type
                 if size is not None:
                     edge.size = size
                 if preview is not None:
@@ -218,13 +399,17 @@ class Trace:
                     edge.value = value
                 if payload_types:
                     edge.payload_types = payload_types
+                if metadata:
+                    edge.metadata.update(metadata)
+                if handoff is not None:
+                    edge.handoffs.append(handoff)
             return edge
 
-    def register_return(self, fingerprint: str, node_id: str) -> None:
+    def register_return(self, fingerprint: str, node_id: str, invocation_id: str | None) -> None:
         """Register the latest direct producer for a fingerprint."""
         with self._cond:
             self._derived_sources.pop(fingerprint, None)
-            self._fp_index[fingerprint] = node_id
+            self._fp_index[fingerprint] = (node_id, invocation_id)
 
     def register_derived_sources(self, fingerprint: str, source_ids: tuple[str, ...]) -> None:
         """Register resolved producers for a value derived outside a node."""
@@ -239,7 +424,39 @@ class Trace:
             if derived_sources is not None:
                 return derived_sources
             direct_source = self._fp_index.get(fingerprint)
-            return (direct_source,) if direct_source is not None else ()
+            return (direct_source[0],) if direct_source is not None else ()
+
+    def lookup_producers(self, fingerprint: str) -> tuple[tuple[str, str | None, str], ...]:
+        """Return producer node, invocation, and provenance for a value."""
+        with self._cond:
+            derived_sources = self._derived_sources.get(fingerprint)
+            if derived_sources is not None:
+                return tuple((source_id, None, "derive") for source_id in derived_sources)
+            direct_source = self._fp_index.get(fingerprint)
+            if direct_source is None:
+                return ()
+            return ((direct_source[0], direct_source[1], "fingerprint"),)
+
+    def add_data_edge(self, source: str, target: str, **kwargs) -> Edge:
+        """Add an aggregated fingerprint-inferred producer/consumer relation."""
+        return self._add_edge_to(self.data_edges, source, target, **kwargs)
+
+    @staticmethod
+    def _edge_dict(edge: Edge) -> dict:
+        """Serialize one relation identically for either graph perspective."""
+        return {
+            "source": edge.source,
+            "target": edge.target,
+            "payload": edge.payload_type,
+            "size": edge.size,
+            "preview": edge.preview,
+            "payload_types": list(edge.payload_types),
+            "count": edge.count,
+            "value": edge.value,
+            "kind": edge.kind,
+            "metadata": edge.metadata,
+            "handoffs": edge.handoffs,
+        }
 
     def to_graph_dict(self) -> dict:
         """Serialize to the JSON shape consumed by the D3 renderer.
@@ -248,10 +465,14 @@ class Trace:
         get a consistent snapshot even while the recorder is mutating nodes/edges.
         """
         with self._cond:
-            categories = sorted({n.module for n in self.nodes.values()})
+            graph_nodes = (self._root_node, *self.nodes.values())
+            categories = sorted({n.module for n in graph_nodes})
             data_types = sorted({e.payload_type for e in self.edges.values()})
             return {
+                "id": self.id,
                 "name": self.name,
+                "root": self.root,
+                "endpoint": self.endpoint,
                 "nodes": [
                     {
                         "id": n.id,
@@ -263,32 +484,48 @@ class Trace:
                         "is_async": n.is_async,
                         "last_ms": n.last_ms,
                         "avg_ms": n.avg_ms,
+                        "kind": n.kind,
+                        "is_start": n.is_start,
+                        "is_root": n.is_root,
                     }
-                    for n in self.nodes.values()
+                    for n in graph_nodes
                 ],
-                "links": [
-                    {
-                        "source": e.source,
-                        "target": e.target,
-                        "payload": e.payload_type,
-                        "size": e.size,
-                        "preview": e.preview,
-                        "payload_types": list(e.payload_types),
-                        "count": e.count,
-                        "value": e.value,
-                    }
-                    for e in self.edges.values()
-                ],
+                # ``links`` remains the application-flow alias for existing
+                # renderers and sidecar consumers.
+                "links": [self._edge_dict(e) for e in self.edges.values()],
+                "perspectives": {
+                    "application": {"links": [self._edge_dict(e) for e in self.edges.values()]},
+                    "data": {"links": [self._edge_dict(e) for e in self.data_edges.values()]},
+                },
                 # execution timeline: drives the fire/pulse animation. Static
                 # renders replay this once on load; the live viewer receives the
                 # same events incrementally via SSE.
-                "total_ms": sum(n.last_ms or 0 for n in self.nodes.values()),
+                "total_ms": sum(n.last_ms or 0 for n in graph_nodes),
                 "handoffs": sum(e.count for e in self.edges.values()),
+                "data_transfers": sum(e.count for e in self.data_edges.values()),
+                "invocations": [
+                    {
+                        "id": invocation.id,
+                        "node_id": invocation.node_id,
+                        "parent_invocation_id": invocation.parent_invocation_id,
+                        "arguments": invocation.arguments,
+                        "started_at": invocation.started_at,
+                        "duration_ms": invocation.duration_ms,
+                        "result_type": invocation.result_type,
+                        "result_size": invocation.result_size,
+                        "result_preview": invocation.result_preview,
+                        "exception": invocation.exception,
+                        "payload_state": invocation.payload_state,
+                    }
+                    for invocation in self.invocations.values()
+                ],
                 "events": [
                     {
                         "ts": ev.ts,
                         "node_id": ev.node_id,
                         "kind": ev.kind,
+                        "invocation_id": ev.invocation_id,
+                        "parent_invocation_id": ev.parent_invocation_id,
                         "edges": ev.edges,
                     }
                     for ev in self.events
@@ -298,4 +535,50 @@ class Trace:
             }
 
 
-__all__ = ["Level", "Node", "Edge", "Event", "Trace"]
+class TraceHistory:
+    """Thread-safe retained request/run history consumed by the live viewer."""
+
+    def __init__(self, limit: int = 100) -> None:
+        self.limit = limit
+        self.traces: OrderedDict[str, Trace] = OrderedDict()
+        self.version = 0
+        self._cond = threading.Condition()
+
+    def _on_trace_change(self, _trace: Trace) -> None:
+        with self._cond:
+            self.version += 1
+            self._cond.notify_all()
+
+    def add(self, trace: Trace) -> Trace:
+        """Retain ``trace`` and subscribe to its live changes."""
+        with self._cond:
+            if trace.id in self.traces:
+                return trace
+            self.traces[trace.id] = trace
+            while len(self.traces) > self.limit:
+                self.traces.popitem(last=False)
+            self.version += 1
+            self._cond.notify_all()
+        # Subscribe outside the history lock: trace changes notify this history
+        # while holding the trace lock, so reversing those lock orders deadlocks.
+        trace.add_listener(self._on_trace_change)
+        return trace
+
+    def snapshot_traces(self) -> list[Trace]:
+        """Return a stable shallow list of retained traces for SSE diffing."""
+        with self._cond:
+            return list(self.traces.values())
+
+    def to_view_dict(self) -> dict:
+        """Serialize all retained traces in newest-first viewer order."""
+        return {"traces": [trace.to_graph_dict() for trace in reversed(self.snapshot_traces())]}
+
+    def wait_for_change(self, version: int, timeout: float) -> int:
+        """Wait until retained history or one of its traces changes."""
+        with self._cond:
+            if self.version <= version:
+                self._cond.wait(timeout=timeout)
+            return self.version
+
+
+__all__ = ["Level", "Node", "Edge", "Invocation", "Event", "Trace", "TraceHistory"]
