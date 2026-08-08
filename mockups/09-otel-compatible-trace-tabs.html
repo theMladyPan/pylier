@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pylier mockup 09 — OTel-compatible trace tabs</title>
+  <style>
+    :root {
+      --paper: #0d1117;
+      --panel: #161b22;
+      --panel-raised: #21262d;
+      --ink: #e6edf3;
+      --muted: #8b949e;
+      --rule: #30363d;
+      --blue: #58a6ff;
+      --green: #3fb950;
+      --violet: #a371f7;
+      --orange: #d29922;
+      --red: #f85149;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--paper);
+      color: var(--ink);
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow: hidden;
+    }
+    header {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--rule);
+      background: var(--panel);
+    }
+    h1 { margin: 0; font: 700 20px ui-sans-serif, system-ui; letter-spacing: -.04em; }
+    .crumb, .muted { color: var(--muted); }
+    .spacer { flex: 1; }
+    .chip { border: 1px solid var(--rule); border-radius: 3px; padding: 4px 7px; font-size: 10px; color: var(--muted); }
+    .chip.compatible { color: var(--violet); border-color: color-mix(in srgb, var(--violet), transparent 55%); }
+    main { height: calc(100% - 58px); display: grid; grid-template-columns: 284px minmax(0, 1fr); }
+    nav { border-right: 1px solid var(--rule); background: var(--panel); padding: 16px 12px; }
+    .label { display: block; color: var(--muted); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; margin: 0 8px 10px; }
+    .trace-tab {
+      width: 100%; appearance: none; border: 1px solid transparent; background: transparent;
+      color: var(--ink); text-align: left; padding: 11px 10px; margin-bottom: 4px; cursor: pointer; border-radius: 4px;
+    }
+    .trace-tab:hover { background: var(--panel-raised); }
+    .trace-tab.active { background: #1c2a3a; border-color: #285d96; }
+    .trace-tab .method { color: var(--green); font-size: 10px; margin-right: 8px; }
+    .trace-tab .path { font-weight: 700; font-size: 12px; }
+    .trace-tab .tab-meta { color: var(--muted); font-size: 10px; margin-top: 6px; display: flex; justify-content: space-between; }
+    .trace-tab.failed .method { color: var(--red); }
+    .nav-note { margin: 18px 8px; border-top: 1px solid var(--rule); padding-top: 14px; color: var(--muted); font: 12px/1.5 ui-sans-serif, system-ui; }
+    .workspace { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    .trace-bar { border-bottom: 1px solid var(--rule); padding: 13px 20px 0; background: var(--paper); }
+    .trace-title { display: flex; align-items: baseline; gap: 9px; padding-bottom: 12px; }
+    .trace-title strong { font-size: 14px; }
+    .trace-title .trace-id { color: var(--muted); font-size: 11px; }
+    .endpoint-tabs { display: flex; gap: 4px; overflow-x: auto; }
+    .endpoint-tab {
+      appearance: none; border: 1px solid transparent; border-bottom: 0; background: transparent; color: var(--muted);
+      padding: 9px 12px; cursor: pointer; white-space: nowrap; font: inherit; font-size: 11px; border-radius: 4px 4px 0 0;
+    }
+    .endpoint-tab:hover { background: var(--panel); color: var(--ink); }
+    .endpoint-tab.active { background: var(--panel); border-color: var(--rule); color: var(--blue); }
+    .content { min-height: 0; display: grid; grid-template-columns: minmax(560px, 1fr) 282px; }
+    .graph-wrap { min-width: 0; position: relative; padding: 28px; background-image: radial-gradient(#21262d .7px, transparent .7px); background-size: 18px 18px; }
+    .graph { width: 100%; height: 100%; min-height: 480px; }
+    .details { border-left: 1px solid var(--rule); background: var(--panel); padding: 19px; }
+    .details h2 { color: var(--muted); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; margin: 0 0 14px; }
+    .row { display: grid; grid-template-columns: 76px 1fr; gap: 8px; border-bottom: 1px dotted var(--rule); padding: 8px 0; }
+    .row span:first-child { color: var(--muted); }
+    .legend { margin-top: 28px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--muted); }
+    .line { width: 22px; height: 2px; background: var(--blue); }
+    .line.otel { background: var(--violet); border-top: 1px dashed var(--violet); height: 0; }
+    .line.return { background: var(--orange); }
+    .box { fill: var(--panel); stroke: var(--rule); stroke-width: 1.25; }
+    .box.root { fill: #1c2a3a; stroke: var(--blue); }
+    .box.alg { stroke: var(--green); }
+    .box.endpoint { stroke: var(--violet); }
+    .node-title { fill: var(--ink); font-size: 13px; font-weight: 700; }
+    .node-sub { fill: var(--muted); font-size: 10px; }
+    .node-badge { fill: var(--blue); font-size: 9px; font-weight: 700; letter-spacing: .06em; }
+    .edge { fill: none; stroke: var(--blue); stroke-width: 2; marker-end: url(#arrow-blue); }
+    .edge.return { stroke: var(--orange); stroke-dasharray: 5 4; marker-end: url(#arrow-orange); }
+    .edge.otel { stroke: var(--violet); stroke-dasharray: 3 4; marker-end: url(#arrow-violet); }
+    .edge-label { fill: var(--muted); font-size: 10px; paint-order: stroke; stroke: var(--paper); stroke-width: 5px; }
+    .flow-note { position: absolute; bottom: 17px; left: 18px; background: var(--panel); border: 1px solid var(--rule); padding: 7px 9px; color: var(--muted); font-size: 10px; }
+    @media (max-width: 900px) { .content { grid-template-columns: 1fr; } .details { display: none; } main { grid-template-columns: 240px minmax(0, 1fr); } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>pylier</h1><span class="crumb">/ request flows</span>
+    <span class="chip compatible">OTel compatible</span>
+    <div class="spacer"></div>
+    <span class="muted">live trace viewer</span>
+  </header>
+  <main>
+    <nav aria-label="Root traces">
+      <span class="label">Root traces · FastAPI</span>
+      <button class="trace-tab active" data-trace="upload">
+        <div><span class="method">POST</span><span class="path">/documents</span></div>
+        <div class="tab-meta"><span>12:44:08.120</span><span>1.42 s · 200</span></div>
+      </button>
+      <button class="trace-tab" data-trace="search">
+        <div><span class="method">POST</span><span class="path">/search</span></div>
+        <div class="tab-meta"><span>12:44:10.881</span><span>0.38 s · 200</span></div>
+      </button>
+      <button class="trace-tab failed" data-trace="retry">
+        <div><span class="method">POST</span><span class="path">/documents</span></div>
+        <div class="tab-meta"><span>12:44:12.053</span><span>2.01 s · 500</span></div>
+      </button>
+      <p class="nav-note">One tab = one incoming OTel root span. Pylier augments its child algorithm flow; it does not replace the OTel trace.</p>
+    </nav>
+    <section class="workspace">
+      <div class="trace-bar">
+        <div class="trace-title"><strong id="trace-name">POST /documents</strong><span class="trace-id" id="trace-id">trace_id: 8f2a…a19c</span></div>
+        <div class="endpoint-tabs" id="endpoint-tabs" aria-label="Endpoints in selected trace"></div>
+      </div>
+      <div class="content">
+        <div class="graph-wrap">
+          <svg class="graph" viewBox="0 0 900 560" role="img" aria-label="Request flow graph" id="graph"></svg>
+          <div class="flow-note">solid = handoff · purple dash = imported OTel parentage · amber dash = response returns to endpoint</div>
+        </div>
+        <aside class="details">
+          <h2>Selected endpoint</h2>
+          <div id="detail-rows"></div>
+          <div class="legend"><h2>Wireframe semantics</h2>
+            <div class="legend-item"><i class="line"></i>pylier data / control flow</div>
+            <div class="legend-item"><i class="line otel"></i>OTel span relationship</div>
+            <div class="legend-item"><i class="line return"></i>handler response route</div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+<script>
+  const traces = {
+    upload: {
+      name: 'POST /documents', id: '8f2a…a19c', endpoints: [
+        { name: 'upload_document', route: 'POST /documents', duration: '1.42 s', status: '200 OK', graph: 'upload' },
+        { name: 'health_check', route: 'GET /health', duration: '4 ms', status: '200 OK', graph: 'health' }
+      ]
+    },
+    search: {
+      name: 'POST /search', id: '72c1…ab02', endpoints: [
+        { name: 'search_documents', route: 'POST /search', duration: '0.38 s', status: '200 OK', graph: 'search' }
+      ]
+    },
+    retry: {
+      name: 'POST /documents', id: '31de…dd94', endpoints: [
+        { name: 'upload_document', route: 'POST /documents', duration: '2.01 s', status: '500 ERROR', graph: 'failure' }
+      ]
+    }
+  };
+  const graphs = {
+    upload: {
+      nodes: [
+        [64,218,'POST /documents','FastAPI server span','OTEL ROOT','root'],
+        [285,218,'upload_document','api.documents','ENDPOINT','endpoint'],
+        [505,116,'extract_text','alg.parse','PYLIER','alg'],
+        [505,334,'store_original','alg.storage','PYLIER','alg'],
+        [720,225,'index_document','alg.index','PYLIER','alg']
+      ],
+      edges: [[204,248,285,248,'otel'],[425,238,505,146,''],[425,258,505,364,''],[645,146,720,225,''],[645,364,720,245,''],[720,268,425,268,'return']],
+      labels: [[216,228,'enters handler'],[458,171,'document'],[469,345,'original'],[660,178,'text'],[660,350,'stored ref'],[540,292,'200 response']]
+    },
+    health: { nodes: [[126,238,'GET /health','FastAPI server span','OTEL ROOT','root'],[408,238,'health_check','api.health','ENDPOINT','endpoint'],[670,238,'readiness','alg.runtime','PYLIER','alg']], edges: [[266,268,408,268,'otel'],[548,268,670,268,''],[670,310,548,310,'return']], labels: [[284,248,'enters handler'],[579,257,'status'],[572,330,'200 response']] },
+    search: { nodes: [[64,218,'POST /search','FastAPI server span','OTEL ROOT','root'],[285,218,'search_documents','api.search','ENDPOINT','endpoint'],[505,120,'embed_query','alg.embed','PYLIER','alg'],[505,340,'rank_results','alg.rank','PYLIER','alg'],[720,225,'format_response','alg.presenter','PYLIER','alg']], edges: [[204,248,285,248,'otel'],[425,238,505,150,''],[645,150,720,225,''],[425,258,505,370,''],[645,370,720,245,''],[720,268,425,268,'return']], labels: [[216,228,'enters handler'],[454,170,'query'],[458,350,'candidates'],[660,178,'vector'],[660,350,'ranked'],[540,292,'200 response']] },
+    failure: { nodes: [[64,218,'POST /documents','FastAPI server span','OTEL ROOT','root'],[285,218,'upload_document','api.documents','ENDPOINT','endpoint'],[515,218,'extract_text','alg.parse','PYLIER','alg'],[730,218,'parse_pdf','vendor.pdf','EXTERNAL','alg']], edges: [[204,248,285,248,'otel'],[425,268,515,268,''],[655,268,730,268,''],[730,310,425,310,'return']], labels: [[216,228,'enters handler'],[451,257,'document'],[664,257,'bytes'],[545,331,'raises 500']] }
+  };
+  const svg = document.querySelector('#graph');
+  const endpointTabs = document.querySelector('#endpoint-tabs');
+  const details = document.querySelector('#detail-rows');
+  let currentTrace = 'upload';
+  function renderGraph(def) {
+    const markers = `<defs><marker id="arrow-blue" viewBox="0 -4 8 8" refX="7" refY="0" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,-4L8,0L0,4Z" fill="#58a6ff"/></marker><marker id="arrow-orange" viewBox="0 -4 8 8" refX="7" refY="0" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,-4L8,0L0,4Z" fill="#d29922"/></marker><marker id="arrow-violet" viewBox="0 -4 8 8" refX="7" refY="0" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,-4L8,0L0,4Z" fill="#a371f7"/></marker></defs>`;
+    const edges = def.edges.map(([x1,y1,x2,y2,kind]) => `<path class="edge ${kind}" d="M${x1} ${y1} C${(x1+x2)/2} ${y1}, ${(x1+x2)/2} ${y2}, ${x2} ${y2}"/>`).join('');
+    const labels = def.labels.map(([x,y,label]) => `<text class="edge-label" x="${x}" y="${y}">${label}</text>`).join('');
+    const nodes = def.nodes.map(([x,y,title,sub,badge,kind]) => `<g transform="translate(${x} ${y})"><rect class="box ${kind}" width="140" height="60" rx="4"/><text class="node-badge" x="11" y="16">${badge}</text><text class="node-title" x="11" y="34">${title}</text><text class="node-sub" x="11" y="50">${sub}</text></g>`).join('');
+    svg.innerHTML = markers + edges + labels + nodes;
+  }
+  function selectEndpoint(endpoint, button) {
+    endpointTabs.querySelectorAll('button').forEach(tab => tab.classList.remove('active'));
+    button.classList.add('active');
+    renderGraph(graphs[endpoint.graph]);
+    details.innerHTML = `<div class="row"><span>route</span><b>${endpoint.route}</b></div><div class="row"><span>duration</span><b>${endpoint.duration}</b></div><div class="row"><span>status</span><b>${endpoint.status}</b></div><div class="row"><span>root</span><b>FastAPI OTel span</b></div><div class="row"><span>children</span><b>pylier algorithms</b></div>`;
+  }
+  function selectTrace(traceKey) {
+    currentTrace = traceKey;
+    const trace = traces[traceKey];
+    document.querySelector('#trace-name').textContent = trace.name;
+    document.querySelector('#trace-id').textContent = `trace_id: ${trace.id}`;
+    endpointTabs.innerHTML = '';
+    trace.endpoints.forEach((endpoint, index) => {
+      const button = document.createElement('button');
+      button.className = 'endpoint-tab';
+      button.textContent = endpoint.name;
+      button.addEventListener('click', () => selectEndpoint(endpoint, button));
+      endpointTabs.append(button);
+      if (index === 0) selectEndpoint(endpoint, button);
+    });
+  }
+  document.querySelectorAll('.trace-tab').forEach(button => button.addEventListener('click', () => {
+    document.querySelectorAll('.trace-tab').forEach(tab => tab.classList.remove('active'));
+    button.classList.add('active');
+    selectTrace(button.dataset.trace);
+  }));
+  selectTrace(currentTrace);
+</script>
+</body>
+</html>
