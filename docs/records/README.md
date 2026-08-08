@@ -1,0 +1,1 @@
+This folder is for storing decision and implementation records related to the project. 

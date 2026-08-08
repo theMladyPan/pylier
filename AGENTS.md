@@ -23,35 +23,37 @@ not data *values*.
 
 The proven visual stack (from the PoC this library codifies): single-file HTML,
 **D3.js v7 from CDN**, vanilla JS + inline SVG, plain CSS, force-directed graph
-with curved parallel edges, stroke styles encoding payload type, click-to-
-inspect details, particle flow animation. No build step, no framework. This
+with deterministic straight/orthogonal paired lanes, stroke styles encoding
+payload type, click-to-inspect details, particle flow animation. No build step,
+no framework. This
 stack is the reference renderer; do not introduce React/Vue/Tailwind/build
 tooling without an explicit decision.
 
 ## Core design decisions (why over what)
 
 ### Decorator-first, edges inferred — never declared
-- `@pylier.node` marks a function as a node. Edges are **inferred from the data
-  that flows between nodes**, not declared.
+- `@pylier.node` marks a function as a node. Application handoffs and Data Flow
+  provenance are inferred at runtime; users never declare edges.
 - **Why:** the whole value is "decorate, structure emerges." A manual edge API
-  (`pipe.connect(A, B)`) was explicitly rejected: it duplicates the actual call
-  graph, is verbose, and breaks the Plotly/logfire "just decorate" feel.
-- Implication: there is no edge-wiring API. Don't add one. The only way data
-  links two nodes is by being returned from one and received by another.
+  (`pipe.connect(A, B)`) was explicitly rejected: it duplicates actual runtime
+  behavior, is verbose, and breaks the Plotly/logfire "just decorate" feel.
+- Implication: there is no edge-wiring API. Don't add one.
 
-### A node is a function; an edge is a data payload
-- `function == node`, `edge == the data payload` passed between them.
-- **Why:** 1:1 with the code is the natural mental model and captures the real
-  pipeline. Pipeline-step-as-node / context-manager-scopes-as-node were
-  rejected as either too boilerplate-y or too complex for nested/branching cases.
+### A node is a function; edges describe runtime movement
+- `function == node`. Application Flow edges are argument, return, empty, or
+  exception handoffs; Data Flow edges are value provenance.
+- **Why:** 1:1 with the code is the natural mental model and captures both call
+  boundaries and data lineage without pipeline-step boilerplate.
 
 ### Two graph perspectives: invocation and lineage
 - **Application Flow** is direct invocation handoff: a nested decorated call
   receives data from its active caller, while a top-level call receives it from
   the trace root. It never draws a fingerprint bypass edge.
 - **Data Flow** separately records fingerprint-inferred producer-to-consumer
-  relations for every decorated consumer of a matching non-empty value. It
-  hides the root and unmatched external inputs/outputs.
+  relations for every decorated consumer of a matching non-empty value,
+  including a nested child return consumed by its decorated caller. It hides
+  root/external handoffs: returns are direct producer-to-consumer links, never
+  round trips through the trace root.
 - Each decorated invocation has a runtime ID. Repeated function-pair links
   aggregate visually but retain individual handoffs for inspection in both
   perspectives.
@@ -90,9 +92,10 @@ tooling without an explicit decision.
 - The client keeps a **persistent force simulation + D3 join** — never tear
   down and cold-restart on updates (that was the 1.5s tearing bug). New nodes
   spawn near an already-placed neighbor, not the center.
-- Live updates are **push, not poll**: SSE sends `event: graph` on topology
-  change (new node/edge, rare) and `event: exec` batches (enter/exit, real-time)
-  that drive the node-pulse / edge-fire animation and call-count badges.
+- Live updates are **push, not poll**: SSE sends a full `event: graph` snapshot
+  only on topology change (new trace/node/edge, rare) and compact `event: exec`
+  batches for enter/exit activity. History batches carry `trace_id`; clients
+  animate only the selected trace and update call-count badges locally.
 
 ### Flat top-level API
 - `@pylier.node`, `pylier.trace()`, `pylier.render()`, `pylier.serve()`,
@@ -202,8 +205,8 @@ examples/pseudo.py  # canonical nested-handoff example
 - The live viewer pushes retained **in-memory** traces; the sidecar sink writes
   events but the viewer doesn't yet reconstruct from a sidecar across
   processes. (Fast-follow: viewer tails sidecar.)
-- OTel/logfire receiver consuming exported spans: planned, **not implemented**.
-  The shipped FastAPI adapter observes only the active in-process server span.
+- A live receiver for external/cross-process telemetry is not implemented.
+  The shipped viewer observes retained in-process traces only.
 - Decorated-but-never-called nodes are not rendered (only called nodes appear).
 - Full invocation payload capture is opt-in (`PYLIER_CAPTURE_VALUES`). Live
   inspector expansion fetches it lazily from the local viewer; it is bounded by
@@ -212,8 +215,8 @@ examples/pseudo.py  # canonical nested-handoff example
 
 ## Fast-follows (out of v0.1 scope — do only on request)
 
-- `tracing/otel.py`: OTel receiver consuming exported/logfire spans → graph.
 - Viewer server tailing the sidecar (cross-process live preview).
+- Optional external telemetry receiver, without adding a core dependency.
 - Richer visual expansion for the individual handoffs aggregated into one edge.
 - Rendered nodes for declared-but-uncalled `@node`s (registry exists in
   `recorder.make_meta`; wiring to render is the gap).

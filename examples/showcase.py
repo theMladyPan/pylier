@@ -51,8 +51,7 @@ so the final graph remains inspectable. Use ``--stage-delay 0.4`` for a faster
 tour or ``--output-dir demo-output`` to collect artifacts elsewhere.
 
 The live viewer follows one in-memory trace only. The JSONL sidecar is an
-offline resolved artifact, not a cross-process live viewer input. OTel support
-is planned; it is not demonstrated or implemented here.
+offline resolved artifact, not a cross-process live viewer input.
 """
 
 from __future__ import annotations

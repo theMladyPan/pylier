@@ -24,8 +24,8 @@ class Settings(BaseSettings):
         level: Global capture verbosity. Nodes with a higher level rank than
             this are dropped. Mirrors logfire's ``min_level``.
         sidecar_path: Directory where the JSONL trace sidecar is written. When
-            set, the recorder also appends events to disk for offline replay /
-            cross-process consumers (OTel receiver, viewer server).
+            set, the recorder also appends resolved events to disk for offline
+            replay and future cross-process consumers.
         sidecar_name: Filename within ``sidecar_path`` for the active sidecar.
         server_port: Port used by ``pylier.serve()`` for the live viewer.
         preview_limit: Max chars of value preview captured at DEBUG+ levels.

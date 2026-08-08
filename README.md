@@ -43,8 +43,8 @@
 ## Quick start: document ingestion
 
 The [ingestion example](examples/ingest.py) is the fastest way to see pylier's
-value: a document branches into text and image paths, then converges at an
-indexing stage.
+value: a document branches into text and image paths, then concurrently embeds
+both branches before they converge at an indexing stage.
 
 ```bash
 git clone https://github.com/theMladyPan/pylier.git
@@ -86,23 +86,35 @@ with pylier.trace("document-ingest"):
 pylier.render("document-ingest.html")  # interactive, standalone HTML
 ```
 
-A returned value that later becomes a function argument creates an edge. For a
-plain-Python transformation or join that loses that relationship, preserve its
-sources explicitly:
+## Two views of one run
+
+The viewer switches between two complementary graph perspectives:
+
+- **Application Flow** — direct argument, return, and exception handoffs between
+  callers and callees. Top-level calls connect to the trace root.
+- **Data Flow** — producer-to-consumer value provenance. It links a returned
+  value directly to every decorated consumer, hides trace-root/external values,
+  and does not draw orchestration round trips.
+
+For a plain-Python transformation or join that loses value provenance, preserve
+its sources explicitly:
 
 ```python
 vectors = pylier.derive(text_vectors + image_vectors, from_=[text_vectors, image_vectors])
 ```
 
 `derive()` returns the original value unchanged; its only job is to keep the
-branch lineage visible in the next decorated stage.
+branch lineage visible in the next decorated stage. See
+[`docs/records/derive-lineage.md`](docs/records/derive-lineage.md) for its exact behavior.
 
 ## Built for useful traces
 
 - **Signal over noise** — use `core`, `info`, `debug`, and `trace` capture
   levels to control both captured nodes and metadata detail.
 - **Useful inspection** — filter by node tags; click graph nodes and edges for
-  payload type, size, preview, and optional captured values.
+  payload type, size, preview, and optional captured values. Full values require
+  `PYLIER_CAPTURE_VALUES=1`, remain local to the live viewer, and are bounded
+  FIFO by count and bytes; static HTML stays metadata-only.
 - **Share or stream** — `pylier.render()` creates a portable HTML file;
   `pylier.serve()` streams updates to a local viewer with SSE.
 - **Keep an audit trail** — `pylier.trace(..., sidecar="trace.jsonl")` writes

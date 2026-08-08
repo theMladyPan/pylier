@@ -9,8 +9,8 @@ Fingerprints are content-addressed (type + content hash), not object-identity,
 so transformed-but-equal copies still link through the pipeline. Hashable values
 use the process-stable builtin ``hash``; unhashable containers fall back to a
 SHA-1 of a best-effort repr. Fingerprints are only meaningful within a single
-recorder process (the sidecar/OTel path stores edges that were already
-resolved, so cross-process stability is not required).
+recorder process (the sidecar stores already-resolved edges, so cross-process
+stability is not required).
 """
 
 from __future__ import annotations

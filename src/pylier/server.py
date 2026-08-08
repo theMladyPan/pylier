@@ -8,8 +8,8 @@ and a growing pipeline updates smoothly without cold-restarting the force
 layout (the layout itself is persistent on the client; see render/template).
 
 This is intentionally minimal: stdlib ``http.server`` in a daemon thread so it
-never blocks the user's program. For production-grade transport (OTel
-receiver, websocket push) see the planned ``tracing/otel.py``.
+never blocks the user's program. Cross-process live transport is out of scope;
+the sidecar remains the offline transport.
 """
 
 from __future__ import annotations
