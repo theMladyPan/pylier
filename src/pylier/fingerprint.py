@@ -47,7 +47,7 @@ def size_of(value: Any) -> int | None:
         return None
 
 
-def serialize_value(value: Any, limit: int = _VALUE_LIMIT) -> str:
+def serialize_value(value: Any, limit: int | None = _VALUE_LIMIT) -> str:
     """Best-effort full serialization of a payload for edge inspection.
 
     Logfire-style: capture whatever was passed. JSON-encodable values are
@@ -61,7 +61,7 @@ def serialize_value(value: Any, limit: int = _VALUE_LIMIT) -> str:
         text = json.dumps(value, default=str, ensure_ascii=False, indent=2)
     except Exception:
         text = preview_of(value, limit)
-    if len(text) > limit:
+    if limit is not None and len(text) > limit:
         text = text[: limit - 1] + "…"
     return text
 

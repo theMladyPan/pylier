@@ -19,6 +19,7 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import unquote
 
 from pylier.model import Trace, TraceHistory
 from pylier.render import build_html
@@ -107,8 +108,37 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
                 )
             elif self.path == "/events":
                 self._handle_sse()
+            elif self.path.startswith("/invocations/") and self.path.endswith("/payload"):
+                self._handle_invocation_payload()
             else:
                 self._send(b"not found", "text/plain", HTTPStatus.NOT_FOUND)
+
+        def _handle_invocation_payload(self) -> None:
+            """Return one retained full payload only after inspector expansion."""
+            parts = self.path.split("/")
+            if len(parts) != 5:
+                self._send(b"not found", "text/plain", HTTPStatus.NOT_FOUND)
+                return
+            trace_id, invocation_id = unquote(parts[2]), unquote(parts[3])
+            if isinstance(captured_trace, TraceHistory):
+                trace = captured_trace.traces.get(trace_id)
+            else:
+                trace = captured_trace if captured_trace.id == trace_id else None
+            if trace is None:
+                self._send(b"trace not found", "text/plain", HTTPStatus.NOT_FOUND)
+                return
+            state, payload = trace.invocation_payload(invocation_id)
+            if state == "missing":
+                self._send(b"invocation not found", "text/plain", HTTPStatus.NOT_FOUND)
+            elif state == "disabled":
+                self._send(b"full values were not captured", "text/plain", HTTPStatus.CONFLICT)
+            elif state == "evicted":
+                self._send(b"full payload was evicted", "text/plain", HTTPStatus.GONE)
+            else:
+                self._send(
+                    json.dumps({"invocation_id": invocation_id, **(payload or {})}).encode(),
+                    "application/json; charset=utf-8",
+                )
 
         def _handle_sse(self) -> None:
             """Stream graph topology (rare) and execution events (real-time).

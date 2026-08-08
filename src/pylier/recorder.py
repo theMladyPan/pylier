@@ -270,6 +270,17 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
     capture = _capture_values_enabled()
     arguments = dict(zip(meta.parameter_names, args, strict=False))
     arguments.update(kwargs)
+    trace.create_invocation(invocation_id, meta.id, caller.invocation_id if caller else None, list(arguments))
+    if capture:
+        from pylier.config import get_settings
+
+        settings = get_settings()
+        trace.store_invocation_payload(
+            invocation_id,
+            {"arguments": serialize_value(arguments, limit=None), "result": ""},
+            settings.payload_max_invocations,
+            settings.payload_max_bytes,
+        )
     fired: list[dict[str, str]] = []
     handoff_details = _argument_handoff_details(args, kwargs, arguments, level, capture)
     # Data Flow intentionally observes every matching argument even when an
@@ -354,6 +365,14 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
                     "parent_invocation_id": caller.invocation_id if caller else None,
                 },
             )
+        trace.complete_invocation(
+            current_invocation.invocation_id if current_invocation else None,
+            duration_ms=ms,
+            result_type=None,
+            result_size=None,
+            result_preview=None,
+            exception=repr(exc),
+        )
         trace.record_event(
             Event(
                 ts=time.time(),
@@ -399,6 +418,26 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
                 "parameter": "return",
                 "provenance": "return",
             },
+        )
+    trace.complete_invocation(
+        current_invocation.invocation_id if current_invocation else None,
+        duration_ms=ms,
+        result_type=return_type,
+        result_size=size_of(result),
+        result_preview=preview_of(result) if level >= Level.DEBUG else None,
+        exception=None,
+    )
+    if _capture_values_enabled():
+        from pylier.config import get_settings
+
+        settings = get_settings()
+        invocation_id = current_invocation.invocation_id if current_invocation else None
+        _state, payload = trace.invocation_payload(invocation_id) if invocation_id else ("missing", None)
+        trace.store_invocation_payload(
+            invocation_id,
+            {"arguments": (payload or {}).get("arguments", "{}"), "result": serialize_value(result, limit=None)},
+            settings.payload_max_invocations,
+            settings.payload_max_bytes,
         )
     fp = fingerprint(result)
     trace.register_return(fp, meta.id, current_invocation.invocation_id if current_invocation else None)

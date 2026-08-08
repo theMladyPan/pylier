@@ -205,9 +205,10 @@ examples/pseudo.py  # canonical nested-handoff example
 - OTel/logfire receiver consuming exported spans: planned, **not implemented**.
   The shipped FastAPI adapter observes only the active in-process server span.
 - Decorated-but-never-called nodes are not rendered (only called nodes appear).
-- Decorator-edge `value` capture is opt-in (`PYLIER_CAPTURE_VALUES`) and binary
-  payloads are always truncated to a summary. Imported OTel attributes/events
-  are debugger data and are serialized raw as emitted by the instrumentation.
+- Full invocation payload capture is opt-in (`PYLIER_CAPTURE_VALUES`). Live
+  inspector expansion fetches it lazily from the local viewer; it is bounded by
+  `PYLIER_PAYLOAD_MAX_INVOCATIONS` (100) and `PYLIER_PAYLOAD_MAX_BYTES` (100
+  MiB), evicting oldest payloads first. Binary payloads are always summaries.
 
 ## Fast-follows (out of v0.1 scope — do only on request)
 

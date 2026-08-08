@@ -10,6 +10,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import IntEnum
+from time import time
 from uuid import uuid4
 
 
@@ -77,6 +78,23 @@ class Edge:
 
 
 @dataclass
+class Invocation:
+    """One debugger-visible decorated call, independent of aggregate edges."""
+
+    id: str
+    node_id: str
+    parent_invocation_id: str | None
+    arguments: list[str]
+    started_at: float
+    duration_ms: float | None = None
+    result_type: str | None = None
+    result_size: int | None = None
+    result_preview: str | None = None
+    exception: str | None = None
+    payload_state: str = "disabled"  # disabled | available | evicted
+
+
+@dataclass
 class Event:
     """A raw recorder event (enter/exit of a node call).
 
@@ -129,6 +147,11 @@ class Trace:
         # from execution handoffs so each view has one unambiguous meaning.
         self.data_edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
         self.events: list[Event] = []
+        self.invocations: OrderedDict[str, Invocation] = OrderedDict()
+        # Full values never enter graph/SSE JSON. This FIFO store exists only
+        # for lazy localhost inspector requests in the live viewer.
+        self._invocation_payloads: OrderedDict[str, tuple[dict[str, str], int]] = OrderedDict()
+        self._payload_bytes = 0
         # event sinks (e.g. SidecarBackend) notified after each resolved event.
         # Typed loosely to keep this module free of tracing-layer imports.
         self.sinks: list = []
@@ -149,6 +172,75 @@ class Trace:
         self.exec_version: int = 0
         self._cond = threading.Condition()
         self._listeners: list = []
+
+    def create_invocation(
+        self, invocation_id: str, node_id: str, parent_invocation_id: str | None, arguments: list[str]
+    ) -> None:
+        """Create the public metadata record for one decorated call."""
+        with self._cond:
+            self.invocations[invocation_id] = Invocation(
+                id=invocation_id,
+                node_id=node_id,
+                parent_invocation_id=parent_invocation_id,
+                arguments=arguments,
+                started_at=time(),
+            )
+
+    def complete_invocation(
+        self,
+        invocation_id: str | None,
+        *,
+        duration_ms: float | None,
+        result_type: str | None,
+        result_size: int | None,
+        result_preview: str | None,
+        exception: str | None,
+    ) -> None:
+        """Finish an invocation metadata record after return or exception."""
+        if invocation_id is None:
+            return
+        with self._cond:
+            invocation = self.invocations.get(invocation_id)
+            if invocation is None:
+                return
+            invocation.duration_ms = duration_ms
+            invocation.result_type = result_type
+            invocation.result_size = result_size
+            invocation.result_preview = result_preview
+            invocation.exception = exception
+
+    def store_invocation_payload(
+        self, invocation_id: str | None, payload: dict[str, str], max_invocations: int, max_bytes: int
+    ) -> None:
+        """Retain one full debugger payload, evicting oldest entries first."""
+        if invocation_id is None:
+            return
+        payload_bytes = sum(len(value.encode("utf-8", errors="replace")) for value in payload.values())
+        with self._cond:
+            invocation = self.invocations.get(invocation_id)
+            if invocation is None:
+                return
+            invocation.payload_state = "available"
+            if previous := self._invocation_payloads.pop(invocation_id, None):
+                self._payload_bytes -= previous[1]
+            self._invocation_payloads[invocation_id] = (payload, payload_bytes)
+            self._payload_bytes += payload_bytes
+            while self._invocation_payloads and (
+                len(self._invocation_payloads) > max_invocations or self._payload_bytes > max_bytes
+            ):
+                evicted_id, (_, evicted_bytes) = self._invocation_payloads.popitem(last=False)
+                self._payload_bytes -= evicted_bytes
+                if evicted := self.invocations.get(evicted_id):
+                    evicted.payload_state = "evicted"
+
+    def invocation_payload(self, invocation_id: str) -> tuple[str, dict[str, str] | None]:
+        """Return ``(state, payload)`` for the live lazy-inspector endpoint."""
+        with self._cond:
+            invocation = self.invocations.get(invocation_id)
+            if invocation is None:
+                return "missing", None
+            item = self._invocation_payloads.get(invocation_id)
+            return invocation.payload_state, item[0] if item is not None else None
 
     def next_invocation_id(self) -> str:
         """Return an ID for one recorded function invocation."""
@@ -407,6 +499,22 @@ class Trace:
                 "total_ms": sum(n.last_ms or 0 for n in graph_nodes),
                 "handoffs": sum(e.count for e in self.edges.values()),
                 "data_transfers": sum(e.count for e in self.data_edges.values()),
+                "invocations": [
+                    {
+                        "id": invocation.id,
+                        "node_id": invocation.node_id,
+                        "parent_invocation_id": invocation.parent_invocation_id,
+                        "arguments": invocation.arguments,
+                        "started_at": invocation.started_at,
+                        "duration_ms": invocation.duration_ms,
+                        "result_type": invocation.result_type,
+                        "result_size": invocation.result_size,
+                        "result_preview": invocation.result_preview,
+                        "exception": invocation.exception,
+                        "payload_state": invocation.payload_state,
+                    }
+                    for invocation in self.invocations.values()
+                ],
                 "events": [
                     {
                         "ts": ev.ts,
@@ -466,4 +574,4 @@ class TraceHistory:
             return self.version
 
 
-__all__ = ["Level", "Node", "Edge", "Event", "Trace", "TraceHistory"]
+__all__ = ["Level", "Node", "Edge", "Invocation", "Event", "Trace", "TraceHistory"]

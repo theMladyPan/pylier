@@ -552,6 +552,34 @@ def test_value_not_captured_by_default():
     assert edge.value is None
 
 
+def test_full_invocation_payloads_are_fifo_bounded(monkeypatch):
+    from pylier.config import reload_settings
+
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    monkeypatch.setenv("PYLIER_PAYLOAD_MAX_INVOCATIONS", "1")
+    reload_settings()
+    try:
+
+        @pylier.node
+        def produce(value: str):
+            return {"full": value * 3000}
+
+        with pylier.trace() as trace:
+            produce("first")
+            produce("second")
+
+        first, second = list(trace.invocations)
+        assert trace.invocation_payload(first)[0] == "evicted"
+        state, payload = trace.invocation_payload(second)
+        assert state == "available"
+        assert payload is not None
+        assert "second" * 3000 in payload["result"]
+    finally:
+        monkeypatch.delenv("PYLIER_CAPTURE_VALUES")
+        monkeypatch.delenv("PYLIER_PAYLOAD_MAX_INVOCATIONS")
+        reload_settings()
+
+
 def test_value_captured_when_enabled(monkeypatch):
     from pylier.config import get_settings, reload_settings
 

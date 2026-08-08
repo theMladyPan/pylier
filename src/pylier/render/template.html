@@ -1074,6 +1074,25 @@ function renderDetails(d) {
     .html(`${d.name} <span class="arr">→</span> ${(nodeByIdNow(l.target.id || l.target)?.name) || (l.target.id || l.target)} · ${l.payload || ""}`));
 }
 
+async function expandInvocation(container, invocationId) {
+  const detail = container.append("div").attr("class", "value").text("Loading full payload…");
+  if (!LIVE) {
+    detail.text("Full payload is available only in the live viewer.");
+    return;
+  }
+  try {
+    const response = await fetch(`/invocations/${encodeURIComponent(selectedTraceId)}/${encodeURIComponent(invocationId)}/payload`);
+    if (!response.ok) {
+      detail.text(await response.text());
+      return;
+    }
+    const payload = await response.json();
+    detail.text(`Arguments\n${payload.arguments || "{}"}\n\nResult\n${payload.result || "null"}`);
+  } catch {
+    detail.text("Could not load the retained payload.");
+  }
+}
+
 function renderEdgeDetails(l) {
   const src = l.source.id || l.source, tgt = l.target.id || l.target;
   const srcName = nodeByIdNow(src)?.name || src, tgtName = nodeByIdNow(tgt)?.name || tgt;
@@ -1085,14 +1104,30 @@ function renderEdgeDetails(l) {
   det.append("div").attr("class", "drow").html(`<span class="k">color</span><span class="v">${payloadCategory(l.payload)}</span>`);
   if (l.size != null) det.append("div").attr("class", "drow").html(`<span class="k">size</span><span class="v">${l.size}</span>`);
   det.append("div").attr("class", "drow").html(`<span class="k">count</span><span class="v">${l.count || 1}×</span>`);
-  if (l.handoffs?.length > 1) {
+  if (l.handoffs?.length) {
     det.append("div").attr("class", "drow").html(`<span class="k">executions</span><span class="v">${l.handoffs.length} distinct calls</span>`);
-    const calls = l.handoffs.map((handoff, index) => ({
-      call: index + 1,
-      invocation: handoff.invocation_id,
-      arguments: handoff.arguments || [],
-    }));
-    det.append("pre").attr("class", "value").text(JSON.stringify(calls, null, 2));
+    const calls = det.append("div").attr("class", "edges");
+    l.handoffs.forEach((handoff, index) => {
+      const invocationId = handoff.invocation_id || handoff.consumer_invocation_id;
+      const row = calls.append("div").attr("class", "edge-line");
+      const toggle = row.append("button").attr("type", "button").text(`▶ #${index + 1}`);
+      row.append("span").text(`  ${(handoff.arguments || [handoff.parameter || "return"]).join(", ")}`);
+      if (!invocationId) {
+        toggle.attr("disabled", true);
+        return;
+      }
+      toggle.on("click", function () {
+        const button = d3.select(this);
+        const existing = row.select("div.value");
+        if (!existing.empty()) {
+          existing.remove();
+          button.text(`▶ #${index + 1}`);
+          return;
+        }
+        button.text(`▼ #${index + 1}`);
+        expandInvocation(row, invocationId);
+      });
+    });
   }
   if (l.value != null) {
     det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"></span>`);

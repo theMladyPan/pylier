@@ -11,6 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from pylier.model import Level
@@ -32,7 +33,9 @@ class Settings(BaseSettings):
             each edge for click-to-inspect debugging (like logfire capturing
             whatever you pass). Disabled by default; binary payloads are
             always truncated to a summary. Settable via ``PYLIER_CAPTURE_VALUES``.
-        value_limit: Max chars of a serialized payload value.
+        value_limit: Max chars of an aggregated edge payload value.
+        payload_max_invocations: Max full invocation payloads retained per trace.
+        payload_max_bytes: Max UTF-8 bytes retained for full invocation payloads.
     """
 
     model_config = SettingsConfigDict(env_prefix="PYLIER_", env_file=".env", extra="ignore")
@@ -44,6 +47,8 @@ class Settings(BaseSettings):
     preview_limit: int = 80
     capture_values: bool = False
     value_limit: int = 2000
+    payload_max_invocations: int = Field(default=100, gt=0)
+    payload_max_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
 
 
 @lru_cache
