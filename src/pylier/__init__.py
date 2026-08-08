@@ -57,6 +57,7 @@ __all__ = [
     "Edge",
     "Event",
     "instrument_fastapi",
+    "instrument_otel",
     "__version__",
 ]
 
@@ -138,6 +139,9 @@ def render(path: str | Path = "pylier.html", trace: Trace | None = None) -> Path
     """
     if trace is None:
         trace = resolve_trace()
+        from pylier.recorder import trace_history
+
+        return render_to_file(trace, path, history=trace_history())
     return render_to_file(trace, path)
 
 
@@ -156,6 +160,18 @@ def set_level(level: Level | str):
 
 # keep `level` as an alias users may find more natural
 level = set_level
+
+
+def instrument_otel(*, provider: Any | None = None):
+    """Attach pylier's universal in-process OpenTelemetry span bridge.
+
+    Args:
+        provider: Optional OpenTelemetry SDK tracer provider. The configured
+            global provider is used when omitted.
+    """
+    from pylier.tracing.otel import instrument_otel as _instrument_otel
+
+    return _instrument_otel(provider=provider)
 
 
 def instrument_fastapi(app: Any) -> None:

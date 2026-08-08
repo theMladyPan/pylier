@@ -48,6 +48,8 @@ class Node:
     avg_ms: float | None = None
     kind: str = "pylier"
     is_start: bool = False
+    # Raw imported OpenTelemetry span payload. Decorator nodes leave this empty.
+    otel: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -69,6 +71,8 @@ class Edge:
     # ``control`` links external request roots to captured algorithms. Data
     # handoffs remain the default and are still inferred by fingerprinting.
     kind: str = "data"
+    # Relation-specific debugger data, e.g. an imported OTel parent span ID.
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -104,7 +108,11 @@ class Trace:
         self.endpoint: dict[str, str | int | None] = {"name": name, "status_code": None}
         self.root_node_id: str | None = None
         self.nodes: OrderedDict[str, Node] = OrderedDict()
-        self.edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
+        # A pair of operations can have data, call, OTel-parent, and return
+        # relations simultaneously, so the relation kind is part of identity.
+        self.edges: OrderedDict[tuple[str, str, str], Edge] = OrderedDict()
+        self._otel_span_nodes: dict[str, str] = {}
+        self._otel_trace_ids: set[str] = set()
         self.events: list[Event] = []
         # event sinks (e.g. SidecarBackend) notified after each resolved event.
         # Typed loosely to keep this module free of tracing-layer imports.
@@ -206,6 +214,8 @@ class Trace:
                 "route": route,
             }
             self.root_node_id = node_id
+            self._otel_span_nodes[otel_span_id] = node_id
+            self._otel_trace_ids.add(otel_trace_id)
             self.nodes[node_id] = Node(
                 id=node_id,
                 name=self.name,
@@ -214,6 +224,7 @@ class Trace:
                 calls=1,
                 kind="fastapi",
                 is_start=True,
+                otel={"trace_id": otel_trace_id, "span_id": otel_span_id, "kind": "SERVER"},
             )
             self._bump_graph()
         return node_id
@@ -232,7 +243,7 @@ class Trace:
         if self.root_node_id is None or target == self.root_node_id:
             return
         with self._cond:
-            key = (self.root_node_id, target)
+            key = (self.root_node_id, target, "call")
             if key in self.edges:
                 return
             endpoint_node = self.nodes.get(target)
@@ -242,7 +253,7 @@ class Trace:
                 source=self.root_node_id,
                 target=target,
                 payload_type="request",
-                kind="control",
+                kind="call",
             )
             self._bump_graph()
 
@@ -269,15 +280,16 @@ class Trace:
         source: str,
         target: str,
         *,
-        payload_type: str,
-        size: int | None,
-        preview: str | None,
+        payload_type: str = "unknown",
+        size: int | None = None,
+        preview: str | None = None,
         payload_types: tuple[str, ...] = (),
         value: str | None = None,
         kind: str = "data",
+        metadata: dict | None = None,
     ) -> Edge:
         with self._cond:
-            key = (source, target)
+            key = (source, target, kind)
             edge = self.edges.get(key)
             if edge is None:
                 edge = Edge(
@@ -289,11 +301,14 @@ class Trace:
                     payload_types=payload_types,
                     value=value,
                     kind=kind,
+                    metadata=metadata or {},
                 )
                 self.edges[key] = edge
                 self._bump_graph()
             else:
                 edge.count += 1
+                if payload_type != "unknown":
+                    edge.payload_type = payload_type
                 if size is not None:
                     edge.size = size
                 if preview is not None:
@@ -302,7 +317,125 @@ class Trace:
                     edge.value = value
                 if payload_types:
                     edge.payload_types = payload_types
+                if metadata:
+                    edge.metadata.update(metadata)
             return edge
+
+    def add_relation(
+        self,
+        source: str,
+        target: str,
+        kind: str,
+        *,
+        payload_type: str = "unknown",
+        size: int | None = None,
+        preview: str | None = None,
+        value: str | None = None,
+        metadata: dict | None = None,
+    ) -> Edge:
+        """Add an execution/imported relation, optionally carrying a return summary."""
+        return self.add_edge(
+            source,
+            target,
+            kind=kind,
+            payload_type=payload_type,
+            size=size,
+            preview=preview,
+            value=value,
+            metadata=metadata,
+        )
+
+    def map_otel_span(self, trace_id: str, span_id: str, node_id: str) -> None:
+        """Associate an OTel span with an existing graph node."""
+        with self._cond:
+            self._otel_trace_ids.add(trace_id)
+            self._otel_span_nodes[span_id] = node_id
+
+    def record_otel_span(self, span: object) -> str | None:
+        """Materialize a finished SDK span as an inspectable OTel operation node.
+
+        The bridge deliberately accepts the OTel object structurally so this
+        neutral core never imports optional OTel packages.
+        """
+        context = span.get_span_context()
+        if not context.is_valid:
+            return None
+        trace_id = f"{context.trace_id:032x}"
+        span_id = f"{context.span_id:016x}"
+        node_id = self._otel_span_nodes.get(span_id, f"otel.span.{span_id}")
+        attributes = dict(getattr(span, "attributes", {}) or {})
+        events = [
+            {"name": event.name, "timestamp": event.timestamp, "attributes": dict(event.attributes or {})}
+            for event in getattr(span, "events", ())
+        ]
+        links = [
+            {
+                "trace_id": f"{link.context.trace_id:032x}",
+                "span_id": f"{link.context.span_id:016x}",
+                "attributes": dict(link.attributes or {}),
+            }
+            for link in getattr(span, "links", ())
+        ]
+        status = getattr(span, "status", None)
+        instrumentation_scope = getattr(span, "instrumentation_scope", None)
+        resource = getattr(span, "resource", None)
+        otel = {
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "parent_span_id": _span_id(getattr(span, "parent", None)),
+            "kind": getattr(getattr(span, "kind", None), "name", str(getattr(span, "kind", "INTERNAL"))),
+            "status": getattr(
+                getattr(status, "status_code", None), "name", str(getattr(status, "status_code", "UNSET"))
+            ),
+            "status_description": getattr(status, "description", None),
+            "attributes": attributes,
+            "events": events,
+            "links": links,
+            "resource": dict(getattr(resource, "attributes", {}) or {}),
+            "instrumentation_scope": {
+                "name": getattr(instrumentation_scope, "name", None),
+                "version": getattr(instrumentation_scope, "version", None),
+            },
+            # ASGI send/receive spans are retained for debugging but hidden from
+            # the primary operation graph; users can reveal them in the viewer.
+            "ui_hidden": _is_framework_transport_span(span, instrumentation_scope),
+        }
+        duration_ms = _span_duration_ms(span)
+        with self._cond:
+            self._otel_trace_ids.add(trace_id)
+            self._otel_span_nodes[span_id] = node_id
+            node = self.nodes.get(node_id)
+            if node is None:
+                node = Node(
+                    id=node_id,
+                    name=getattr(span, "name", "OTel span"),
+                    module=otel["instrumentation_scope"]["name"] or "opentelemetry",
+                    level=Level.TRACE,
+                    calls=1,
+                    last_ms=duration_ms,
+                    avg_ms=duration_ms,
+                    kind="otel",
+                    otel=otel,
+                )
+                self.nodes[node_id] = node
+                self._bump_graph()
+            else:
+                node.otel = otel
+                node.last_ms = duration_ms
+                node.avg_ms = duration_ms
+                self._bump_exec()
+            parent_node_id = self._otel_span_nodes.get(otel["parent_span_id"])
+            if parent_node_id is not None and parent_node_id != node_id:
+                self.add_relation(parent_node_id, node_id, "otel_parent", metadata={"span_id": span_id})
+        return node_id
+
+    def emit_external_event(self, event: dict) -> None:
+        """Send an already-resolved imported event to sidecar/debug sinks."""
+        for sink in tuple(self.sinks):
+            try:
+                sink(event)
+            except Exception:
+                continue
 
     def register_return(self, fingerprint: str, node_id: str) -> None:
         """Register the latest direct producer for a fingerprint."""
@@ -352,6 +485,7 @@ class Trace:
                         "avg_ms": n.avg_ms,
                         "kind": n.kind,
                         "is_start": n.is_start,
+                        "otel": n.otel,
                     }
                     for n in self.nodes.values()
                 ],
@@ -366,6 +500,7 @@ class Trace:
                         "count": e.count,
                         "value": e.value,
                         "kind": e.kind,
+                        "metadata": e.metadata,
                     }
                     for e in self.edges.values()
                 ],
@@ -386,6 +521,25 @@ class Trace:
                 "categories": categories,
                 "dataTypes": data_types,
             }
+
+
+def _is_framework_transport_span(span: object, instrumentation_scope: object | None) -> bool:
+    scope_name = str(getattr(instrumentation_scope, "name", ""))
+    span_name = str(getattr(span, "name", ""))
+    return scope_name.startswith("opentelemetry.instrumentation.fastapi") and span_name.endswith(
+        (" http send", " http receive")
+    )
+
+
+def _span_id(context: object | None) -> str | None:
+    span_id = getattr(context, "span_id", 0)
+    return f"{span_id:016x}" if span_id else None
+
+
+def _span_duration_ms(span: object) -> float | None:
+    start = getattr(span, "start_time", None)
+    end = getattr(span, "end_time", None)
+    return (end - start) / 1_000_000 if isinstance(start, int) and isinstance(end, int) else None
 
 
 class TraceHistory:
@@ -416,6 +570,12 @@ class TraceHistory:
         # while holding the trace lock, so reversing those lock orders deadlocks.
         trace.add_listener(self._on_trace_change)
         return trace
+
+    def find_by_otel_trace_id(self, otel_trace_id: str) -> Trace | None:
+        """Return the retained pylier trace associated with an OTel trace ID."""
+        with self._cond:
+            traces = tuple(self.traces.values())
+        return next((trace for trace in reversed(traces) if otel_trace_id in trace._otel_trace_ids), None)
 
     def to_view_dict(self) -> dict:
         """Serialize all retained traces in newest-first viewer order."""

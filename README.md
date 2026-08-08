@@ -140,13 +140,18 @@ endpoint tab and graph. The FastAPI root is shown with a `START` callout;
 solid graph edges remain pylier data flow, and the request-to-first-algorithm
 control edge only establishes the external request boundary.
 
-A runnable IANA-timezone endpoint is in
-[`examples/fastapi_time.py`](examples/fastapi_time.py):
+A runnable IANA-timezone and SQLite example is in
+[`examples/fastapi_time.py`](examples/fastapi_time.py). The generic in-process
+OTel bridge imports its SQLite operation spans without a `@pylier.node`
+decorator, preserving their emitted attributes/events in the inspector:
 
 ```bash
 uv sync --group examples
 uv run --group examples examples/fastapi_time.py
 curl 'http://127.0.0.1:8000/time?location=Europe/Bratislava'
+curl -X POST 'http://127.0.0.1:8000/locations' \
+  -H 'content-type: application/json' \
+  -d '{"location":"Europe/Bratislava"}'
 # viewer: http://127.0.0.1:8765
 ```
 

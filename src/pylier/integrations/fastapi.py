@@ -50,6 +50,7 @@ class PylierASGIMiddleware:
         method = str(scope.get("method", "HTTP"))
         route = _route(scope, span_data[2])
         trace = Trace(f"{method} {route}")
+        _attach_configured_sidecar(trace)
         (self.history or trace_history()).add(trace)
         trace.set_request_root(
             method=method,
@@ -91,7 +92,22 @@ def instrument_fastapi(app: Any) -> None:
     add_middleware = getattr(app, "add_middleware", None)
     if not callable(add_middleware):
         raise TypeError("instrument_fastapi() requires a FastAPI/Starlette app with add_middleware()")
+    from pylier.tracing.otel import instrument_otel
+
+    instrument_otel()
     add_middleware(PylierASGIMiddleware)
+
+
+def _attach_configured_sidecar(trace: Trace) -> None:
+    """Attach the configured resolved-event sidecar to request traces."""
+    from pylier.config import get_settings
+
+    settings = get_settings()
+    if settings.sidecar_path is None:
+        return
+    from pylier.tracing.sidecar import SidecarBackend
+
+    trace.sinks.append(SidecarBackend(settings.sidecar_path, settings.sidecar_name))
 
 
 def _active_span_data() -> tuple[str, str, dict[str, Any]] | None:

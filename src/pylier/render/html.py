@@ -39,10 +39,10 @@ def build_html(trace: Trace, *, history: Any | None = None) -> str:
     return html
 
 
-def render_to_file(trace: Trace, path: str | Path) -> Path:
+def render_to_file(trace: Trace, path: str | Path, *, history: Any | None = None) -> Path:
     """Write ``trace`` as a self-contained HTML file and return its path."""
     out = Path(path)
-    out.write_text(build_html(trace), encoding="utf-8")
+    out.write_text(build_html(trace, history=history), encoding="utf-8")
     return out
 
 

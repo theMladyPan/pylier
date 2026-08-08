@@ -202,6 +202,9 @@
   .node rect.body { fill: var(--card); stroke: var(--node-stroke); stroke-width: 1; }
   .node:hover rect.body { stroke: var(--accent); stroke-width: 1.5; }
   .node rect.status { stroke: none; }
+  .node.fastapi rect.body { stroke: var(--accent); stroke-width: 1.5; }
+  .node.otel rect.body { stroke: var(--type-tuple); stroke-width: 1.5; }
+  .node.endpoint rect.body { stroke: var(--st-idle); stroke-width: 1.5; }
   .node text { pointer-events: none; font-family: var(--mono); }
   .node .num { font-size: 9px; fill: var(--muted); }
   .node .name { font-size: 13px; font-weight: 700; fill: var(--ink); }
@@ -211,7 +214,8 @@
 
   /* Match the mockup's fine-line, low-noise graph treatment. */
   .link { fill: none; opacity: .8; stroke-width: 1.5px; }
-  .link.control { stroke: var(--type-tuple) !important; stroke-dasharray: 4 4; }
+  .link.call { stroke: var(--accent) !important; }.link.otel_parent { stroke: var(--type-tuple) !important; }
+  .link.return { stroke: var(--type-dict) !important; stroke-dasharray: 7 6; opacity: .8; }
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
   .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden, .trace-start.tag-hidden { display: none; }
@@ -270,6 +274,7 @@
         </div>
         <label><input type="checkbox" id="c-labels" checked /> Show edge labels</label>
         <label><input type="checkbox" id="c-anim" checked /> Animate execution</label>
+        <label><input type="checkbox" id="c-framework" /> Show framework internals</label>
         <div class="btns">
           <button id="b-fit">Fit view</button>
           <button id="b-reset">Reset</button>
@@ -365,6 +370,9 @@ function edgeStroke(d) {
   return tupleGradientCategories(d).length ? `url(#${gradientId(d)})` : typeColorOf(d);
 }
 function edgeLabel(d) {
+  if (d.kind === "call") return "call";
+  if (d.kind === "return") return "return";
+  if (d.kind === "otel_parent") return "OTel parent";
   const members = d.payload_types || [];
   return members.length ? `tuple<${members.join(", ")}>` : (d.payload || "unknown");
 }
@@ -529,7 +537,7 @@ if (LIVE) {
   es.onerror = () => { es.close(); };
 }
 
-let state = { showLabels: true, animate: true, edgeMode: "rectilinear", selected: null, tagFilter: new Set(), tagMode: "any" };
+let state = { showLabels: true, animate: true, showFramework: false, edgeMode: "rectilinear", selected: null, tagFilter: new Set(), tagMode: "any" };
 // nodes currently executing (enter seen, exit not) — drives the status stripe
 const active = new Set();
 
@@ -641,8 +649,9 @@ function applyTagVisibility() {
 }
 
 function traceStartNode(data, nodes) {
-  const startId = (data.events || []).find(event => event.kind === "enter")?.node_id;
-  return nodes.find(node => node.id === startId) || nodes[0] || null;
+  return nodes.find(node => node.is_start) || nodes.find(node => node.kind === "fastapi")
+    || nodes.find(node => node.id === (data.events || []).find(event => event.kind === "enter")?.node_id)
+    || nodes[0] || null;
 }
 
 function updateStartMarker(data, nodes) {
@@ -698,10 +707,11 @@ function update() {
 
   const prevById = new Map(nodeData.map(n => [n.id, n]));
   const prevNodeIds = new Set(prevById.keys());
-  const fresh = data.nodes.map((d, i) => {
+  const displayedNodes = data.nodes.filter(node => state.showFramework || !node.otel?.ui_hidden);
+  const fresh = displayedNodes.map((d, i) => {
     const prev = prevById.get(d.id);
     if (prev) return Object.assign(prev, d);
-    const sp = spawnPosition(d.id, prevById, data, i, data.nodes.length);
+    const sp = spawnPosition(d.id, prevById, { ...data, nodes: displayedNodes }, i, displayedNodes.length);
     return Object.assign({}, d, { x: sp.x, y: sp.y });
   });
   const nodeById = new Map(fresh.map(n => [n.id, n]));
@@ -727,7 +737,7 @@ function update() {
   const nodeJoin = nodesG.selectAll("g.node").data(fresh, d => d.id);
   nodeJoin.exit().remove();
   const nodeEnter = nodeJoin.enter().append("g")
-    .attr("class", d => "node" + (d.is_async ? " async" : ""))
+    .attr("class", d => `node ${d.kind || "pylier"}${d.is_async ? " async" : ""}`)
     .call(d3.drag()
       .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
       .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
@@ -741,7 +751,7 @@ function update() {
   nodeEnter.on("click", (e, d) => { state.selected = d.id; highlight(d); renderDetails(d); });
 
   nodeSel = nodeJoin.merge(nodeEnter);
-  nodeSel.attr("class", d => "node" + (d.is_async ? " async" : "") + (active.has(d.id) ? " pulsing" : ""));
+  nodeSel.attr("class", d => `node ${d.kind || "pylier"}${d.is_async ? " async" : ""}${active.has(d.id) ? " pulsing" : ""}`);
   nodeSel.select("rect.body").attr("width", nodeW).attr("x", d => -nodeW(d) / 2);
   nodeSel.select("rect.status")
     .attr("x", d => -nodeW(d) / 2).attr("height", NH).attr("y", -NH / 2)
@@ -781,7 +791,7 @@ function update() {
   linkSel = linkJoin.enter().append("path")
     .attr("class", "link")
     .merge(linkJoin)
-    .attr("class", d => `link${d.kind === "control" ? " control" : ""}`)
+    .attr("class", d => `link ${d.kind || "data"}`)
     .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
     .style("stroke", edgeStroke)
     .attr("stroke-width", 1.5)
@@ -806,7 +816,23 @@ function update() {
 }
 
 function edgeRoute(d) {
+  if (d.kind === "return") return returnRoute(d);
   return state.edgeMode === "direct" ? directRoute(d) : linkRoute(d);
+}
+
+// Return edges deliberately take a curved outer lane. They are execution
+// completion, not another forward payload path, so overlapping call edges
+// would erase their meaning.
+function returnRoute(d) {
+  const s = d.source, t = d.target;
+  const dx = t.x - s.x, dy = t.y - s.y, length = Math.hypot(dx, dy) || 1;
+  const start = directCardPoint(s, dx, dy, ROUTE.sourcePad);
+  const end = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
+  const lane = 48 + (d._idx % 3) * 18;
+  const nx = (-dy / length) * lane, ny = (dx / length) * lane;
+  const c1 = { x: start.x + dx * .28 + nx, y: start.y + dy * .28 + ny };
+  const c2 = { x: start.x + dx * .72 + nx, y: start.y + dy * .72 + ny };
+  return { path: `M${start.x},${start.y}C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`, x: (c1.x + c2.x) / 2, y: (c1.y + c2.y) / 2 };
 }
 
 function redrawEdges() {
@@ -1017,7 +1043,12 @@ function renderDetails(d) {
     const avg = d.avg_ms != null && fmtMs(d.avg_ms) !== fmtMs(d.last_ms) ? ` · avg ${fmtMs(d.avg_ms)} ms` : "";
     det.append("div").attr("class", "drow").html(`<span class="k">latency</span><span class="v">${fmtMs(d.last_ms)} ms${avg}</span>`);
   }
-  det.append("div").attr("class", "drow").html(`<span class="k">kind</span><span class="v">${d.is_async ? "async" : "sync"}</span>`);
+  det.append("div").attr("class", "drow").html(`<span class="k">kind</span><span class="v">${d.kind === "otel" ? "imported OTel span" : d.is_async ? "async" : "sync"}</span>`);
+  if (d.otel && Object.keys(d.otel).length) {
+    det.append("h2").text("OpenTelemetry");
+    const raw = det.append("pre").attr("class", "value");
+    raw.text(JSON.stringify(d.otel, null, 2));
+  }
   const st = active.has(d.id) ? (d.is_async ? "async waiting" : "sync busy") : "idle / done";
   det.append("div").attr("class", "drow").html(`<span class="k">status</span><span class="v">${st}</span>`);
   if (d.tags && d.tags.length) {
@@ -1054,8 +1085,12 @@ function renderEdgeDetails(l) {
   } else if (l.preview != null) {
     det.append("div").attr("class", "drow").html(`<span class="k">preview</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.preview);
+  } else if (l.kind === "return" && l.payload && l.payload !== "unknown") {
+    det.append("div").attr("class", "drow").html(`<span class="k">return value</span><span class="v"><i>summary captured; set PYLIER_CAPTURE_VALUES=1 for the full value</i></span>`);
+  } else if (l.kind !== "data") {
+    det.append("div").attr("class", "drow").html(`<span class="k">payload</span><span class="v"><i>none — this is an execution relationship, not moved data</i></span>`);
   } else {
-    det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"><i>not captured — set PYLIER_CAPTURE_VALUES=1 or run at level "debug" for a preview</i></span>`);
+    det.append("div").attr("class", "value").html(`<span class="k">value</span><span class="v"><i>not captured — set PYLIER_CAPTURE_VALUES=1 or run at level "debug" for a preview</i></span>`);
   }
 }
 
@@ -1089,6 +1124,7 @@ d3.select("#b-reset").on("click", () => {
 });
 d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
 d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
+d3.select("#c-framework").on("change", e => { state.showFramework = e.target.checked; update(); });
 d3.selectAll('input[name="edge-mode"]').on("change", e => setEdgeMode(e.target.value));
 d3.selectAll('input[name="tag-mode"]').on("change", e => { state.tagMode = e.target.value; update(); });
 

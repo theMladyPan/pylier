@@ -1,6 +1,6 @@
 # FastAPI OTel request viewer
 
-Implemented an optional ASGI/FastAPI adapter that reads an already-active OpenTelemetry server span, captures decorated algorithms under a synthetic FastAPI request root, and retains all runs in the shared live viewer history. The shared renderer now provides root-trace and endpoint tabs plus a FastAPI-only `START` callout; ordinary decorator traces remain supported without OTel.
+Implemented an optional ASGI/FastAPI adapter that reads an already-active OpenTelemetry server span, captures decorated algorithms under a synthetic FastAPI request root, and enables the universal in-process OTel span bridge. The shared renderer retains all runs in root-trace history, prioritizes the FastAPI root for `START`, and shows imported child spans; ordinary decorator traces remain supported without OTel.
 
 ## Why
 

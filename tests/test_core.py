@@ -30,7 +30,8 @@ def test_sync_edge_inferred_from_returned_value():
     ids = list(tr.nodes)
     assert len(ids) == 2
     assert len(tr.edges) == 1
-    (src, tgt), edge = next(iter(tr.edges.items()))
+    (src, tgt, kind), edge = next(iter(tr.edges.items()))
+    assert kind == "data"
     assert src.endswith("producer")
     assert tgt.endswith("consumer")
     assert edge.payload_type == "dict"
@@ -60,8 +61,8 @@ def test_derive_infers_multiple_sources_for_a_computed_value():
     index_node_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("index_document"))
     inbound_source_names = {
         trace.nodes[source_id].name.rsplit(".", 1)[-1]
-        for source_id, target_id in trace.edges
-        if target_id == index_node_id
+        for source_id, target_id, kind in trace.edges
+        if target_id == index_node_id and kind == "data"
     }
     assert inbound_source_names == {"load_title", "load_body"}
 
@@ -218,7 +219,7 @@ def test_branching_pipeline_inferred():
     assert len(tr.nodes) == 4
     # load -> a, load -> b, a -> merge, b -> merge
     assert len(tr.edges) == 4
-    targets_of_load = {tgt for (src, tgt), e in tr.edges.items() if src.endswith("load")}
+    targets_of_load = {tgt for (src, tgt, kind), e in tr.edges.items() if src.endswith("load") and kind == "data"}
     assert {t.rsplit(".", 1)[-1] for t in targets_of_load} == {"branch_a", "branch_b"}
 
 
@@ -317,6 +318,9 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "sim.alpha(prevNodeIds.size ? 0.12 : 0.65).restart()" in html
     assert "trace-start" in html
     assert "traceStartNode" in html
+    assert "nodes.find(node => node.is_start)" in html
+    assert ".link.return" in html
+    assert "JSON.stringify(d.otel, null, 2)" in html
     assert 'name="edge-mode"' in html
     assert "directRoute" in html
     assert 'state.edgeMode === "direct" ? directRoute(d) : linkRoute(d)' in html
@@ -614,9 +618,60 @@ def test_fastapi_request_trace_serializes_root_and_control_handoff():
     assert graph["root"]["otel_trace_id"] == f"{0x1234:032x}"
     assert graph["endpoint"]["status_code"] == 201
     assert next(node for node in graph["nodes"] if node["name"].endswith("endpoint_algorithm"))["kind"] == "endpoint"
-    control = next(link for link in graph["links"] if link["kind"] == "control")
+    control = next(link for link in graph["links"] if link["kind"] == "call")
     assert control["source"] == root["id"]
     assert control["target"].endswith("endpoint_algorithm")
+    completion = next(link for link in graph["links"] if link["kind"] == "return")
+    assert completion["source"].endswith("endpoint_algorithm")
+    assert completion["target"] == root["id"]
+    assert completion["payload"] == "dict"
+
+
+def test_relation_kinds_can_coexist_between_the_same_nodes():
+    trace = Trace("relations")
+    trace.add_edge("source", "target", payload_type="str")
+    trace.add_relation("source", "target", "call")
+    trace.add_relation("source", "target", "return")
+
+    assert {(edge.source, edge.target, edge.kind) for edge in trace.edges.values()} == {
+        ("source", "target", "data"),
+        ("source", "target", "call"),
+        ("source", "target", "return"),
+    }
+
+
+def test_universal_otel_bridge_imports_raw_span_and_parent_relation():
+    otel_sdk_trace = pytest.importorskip("opentelemetry.sdk.trace")
+    from opentelemetry import context as otel_context
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
+
+    from pylier.model import TraceHistory
+    from pylier.tracing.otel import instrument_otel
+
+    history = TraceHistory()
+    request_trace = Trace("POST /locations")
+    request_trace.set_request_root(
+        method="POST", route="/locations", otel_trace_id=f"{0x1234:032x}", otel_span_id=f"{0x5678:016x}"
+    )
+    history.add(request_trace)
+    provider = otel_sdk_trace.TracerProvider()
+    instrument_otel(provider=provider, history=history)
+    parent = SpanContext(trace_id=0x1234, span_id=0x5678, is_remote=False, trace_flags=TraceFlags(TraceFlags.SAMPLED))
+    token = otel_context.attach(set_span_in_context(NonRecordingSpan(parent)))
+    try:
+        with provider.get_tracer("sqlite3").start_as_current_span("INSERT INTO locations") as span:
+            span.set_attribute("db.statement", "INSERT INTO locations (location) VALUES (?)")
+            span.add_event("db.parameters", {"location": "Europe/Bratislava"})
+    finally:
+        otel_context.detach(token)
+
+    imported = next(node for node in request_trace.nodes.values() if node.kind == "otel")
+    assert imported.otel["attributes"]["db.statement"].endswith("VALUES (?)")
+    assert imported.otel["events"][0]["attributes"]["location"] == "Europe/Bratislava"
+    assert any(
+        edge.kind == "otel_parent" and edge.source == request_trace.root_node_id
+        for edge in request_trace.edges.values()
+    )
 
 
 def test_versions_split_topology_vs_execution():
