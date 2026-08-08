@@ -18,12 +18,12 @@
 <table>
 <tr>
 <td width="50%" align="center">
-  <a href="examples/showcase.py">
+  <a href="assets/app-flow-view.png">
     <img src="assets/app-flow-view.png" alt="pylier Application Flow view showing nested fulfillment branches" width="100%">
   </a>
 </td>
 <td width="50%" align="center">
-  <a href="examples/showcase.py">
+  <a href="assets/data-flow-view.png">
     <img src="assets/data-flow-view.png" alt="pylier Data Flow view showing value provenance across fulfillment branches" width="100%">
   </a>
 </td>
