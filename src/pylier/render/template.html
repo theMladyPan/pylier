@@ -878,15 +878,15 @@ function directRoute(d) {
   const s = d.source, t = d.target;
   const dx = t.x - s.x, dy = t.y - s.y, length = Math.hypot(dx, dy);
   if (length < 0.001) return { path: `M${s.x},${s.y}L${t.x},${t.y}`, x: s.x, y: s.y };
-  const start = directCardPoint(s, dx, dy, ROUTE.sourcePad);
-  const end = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
-  // Each handoff travels on its left rail. Reversing direction naturally puts
-  // a return on the caller's right rail without unstable pairwise forces.
-  const lane = Math.min(18, Math.max(8, length * .08));
+  // Parallel straight rails: reverse travel reverses the normal, putting a
+  // return on the opposite side without curves or simulation-dependent force.
+  const lane = 8;
   const nx = (-dy / length) * lane, ny = (dx / length) * lane;
-  const c1 = { x: start.x + dx * .30 + nx, y: start.y + dy * .30 + ny };
-  const c2 = { x: start.x + dx * .70 + nx, y: start.y + dy * .70 + ny };
-  return { path: `M${start.x},${start.y}C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`, x: (c1.x + c2.x) / 2, y: (c1.y + c2.y) / 2 };
+  const rawStart = directCardPoint(s, dx, dy, ROUTE.sourcePad);
+  const rawEnd = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
+  const start = { x: rawStart.x + nx, y: rawStart.y + ny };
+  const end = { x: rawEnd.x + nx, y: rawEnd.y + ny };
+  return { path: `M${start.x},${start.y}L${end.x},${end.y}`, x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
 }
 
 function linkRoute(d) {
