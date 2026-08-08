@@ -52,8 +52,11 @@ T = TypeVar("T")
 
 _active_trace: contextvars.ContextVar[Trace | None] = contextvars.ContextVar("pylier_active_trace", default=None)
 _level_override: contextvars.ContextVar[Level | None] = contextvars.ContextVar("pylier_level_override", default=None)
-# Execution scope identifies where entry arguments and exit values hand off.
-_execution_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar("pylier_execution_stack", default=())
+# Execution scope identifies authoritative direct caller/callee handoffs. Value
+# fingerprints are only fallback lineage when no decorated caller is active.
+_execution_stack: contextvars.ContextVar[tuple[InvocationFrame, ...]] = contextvars.ContextVar(
+    "pylier_execution_stack", default=()
+)
 
 _default_trace: Trace | None = None
 # most recently entered trace context, so ``pylier.render()`` / ``serve()``
@@ -74,6 +77,14 @@ class NodeMeta:
     tags: tuple[str, ...]
     parameter_names: tuple[str, ...] = ()
     is_async: bool = False
+
+
+@dataclass(frozen=True)
+class InvocationFrame:
+    """One active decorated call, distinct from its reusable function node."""
+
+    node_id: str
+    invocation_id: str
 
 
 def current_trace() -> Trace:
@@ -227,47 +238,78 @@ def derive_value[T](value: T, *, from_: Iterable[object]) -> T:
 
 
 def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> contextvars.Token:
-    """Register the node call and infer inbound edges from arg fingerprints.
+    """Register a call, preferring its direct caller over value lineage.
 
-    Appends an ``enter`` event listing the edges fired at this moment — each
-    (source -> this) pair is a data handoff the renderer should glow on.
+    A nested decorated call is an authoritative handoff from its active caller.
+    Fingerprints are consulted only for top-level consumers, where pylier has
+    no direct execution context and historical provenance is the best signal.
     """
     trace.get_or_create_node(_make_node(meta))
     caller_stack = _execution_stack.get()
-    caller_id = caller_stack[-1] if caller_stack else trace.root_node_id
-    execution_token = _execution_stack.set((*caller_stack, meta.id))
+    caller = caller_stack[-1] if caller_stack else None
+    invocation_id = trace.next_invocation_id()
+    execution_token = _execution_stack.set((*caller_stack, InvocationFrame(meta.id, invocation_id)))
     level = current_level()
     capture = _capture_values_enabled()
+    arguments = dict(zip(meta.parameter_names, args, strict=False))
+    arguments.update(kwargs)
     fired: list[dict[str, str]] = []
-    for arg in (*args, *kwargs.values()):
-        for source_id in trace.lookup_sources(fingerprint(arg)):
-            if source_id == meta.id:
-                continue
-            trace.add_edge(
-                source_id,
-                meta.id,
-                payload_type=type_name(arg),
-                size=size_of(arg) if level >= Level.INFO else None,
-                preview=preview_of(arg) if level >= Level.DEBUG else None,
-                payload_types=tuple_member_type_names(arg),
-                value=serialize_value(arg) if capture else None,
-                metadata={"phase": "arguments"},
-            )
-            fired.append({"source": source_id, "target": meta.id})
-    if not fired and caller_id is not None and caller_id != meta.id and (args or kwargs or caller_stack):
-        arguments = dict(zip(meta.parameter_names, args, strict=False))
-        arguments.update(kwargs)
+
+    if caller is not None:
         trace.add_edge(
-            caller_id,
+            caller.node_id,
             meta.id,
-            payload_type="empty" if not args and not kwargs else "arguments",
+            payload_type="empty" if not arguments else "arguments",
             size=size_of(arguments) if level >= Level.INFO else None,
             preview=preview_of(arguments) if level >= Level.DEBUG else None,
             value=serialize_value(arguments) if capture else None,
             metadata={"phase": "arguments"},
+            handoff={
+                "invocation_id": invocation_id,
+                "parent_invocation_id": caller.invocation_id,
+                "arguments": list(arguments),
+            },
         )
-        fired.append({"source": caller_id, "target": meta.id})
-    trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="enter", edges=fired))
+        fired.append({"source": caller.node_id, "target": meta.id})
+    else:
+        for arg in (*args, *kwargs.values()):
+            for source_id in trace.lookup_sources(fingerprint(arg)):
+                if source_id == meta.id:
+                    continue
+                trace.add_edge(
+                    source_id,
+                    meta.id,
+                    payload_type=type_name(arg),
+                    size=size_of(arg) if level >= Level.INFO else None,
+                    preview=preview_of(arg) if level >= Level.DEBUG else None,
+                    payload_types=tuple_member_type_names(arg),
+                    value=serialize_value(arg) if capture else None,
+                    metadata={"phase": "arguments"},
+                    handoff={"invocation_id": invocation_id, "arguments": list(arguments)},
+                )
+                fired.append({"source": source_id, "target": meta.id})
+        if not fired and arguments:
+            trace.add_edge(
+                trace.root_node_id,
+                meta.id,
+                payload_type="empty" if not arguments else "arguments",
+                size=size_of(arguments) if level >= Level.INFO else None,
+                preview=preview_of(arguments) if level >= Level.DEBUG else None,
+                value=serialize_value(arguments) if capture else None,
+                metadata={"phase": "arguments"},
+                handoff={"invocation_id": invocation_id, "arguments": list(arguments)},
+            )
+            fired.append({"source": trace.root_node_id, "target": meta.id})
+    trace.record_event(
+        Event(
+            ts=time.time(),
+            node_id=meta.id,
+            kind="enter",
+            invocation_id=invocation_id,
+            parent_invocation_id=caller.invocation_id if caller else None,
+            edges=fired,
+        )
+    )
     return execution_token
 
 
@@ -280,11 +322,30 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
     if ms is not None:
         trace.record_latency(meta.id, ms)
     caller_stack = _execution_stack.get()
-    return_target = caller_stack[-2] if len(caller_stack) > 1 else trace.root_node_id
+    current_invocation = caller_stack[-1] if caller_stack else None
+    caller = caller_stack[-2] if len(caller_stack) > 1 else None
+    return_target = caller.node_id if caller is not None else trace.root_node_id
     if exc is not None:
-        if return_target is not None and return_target != meta.id:
-            trace.add_edge(meta.id, return_target, payload_type="exception", metadata={"phase": "exception"})
-        trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="exit"))
+        if return_target != meta.id:
+            trace.add_edge(
+                meta.id,
+                return_target,
+                payload_type="exception",
+                metadata={"phase": "exception"},
+                handoff={
+                    "invocation_id": current_invocation.invocation_id if current_invocation else None,
+                    "parent_invocation_id": caller.invocation_id if caller else None,
+                },
+            )
+        trace.record_event(
+            Event(
+                ts=time.time(),
+                node_id=meta.id,
+                kind="exit",
+                invocation_id=current_invocation.invocation_id if current_invocation else None,
+                parent_invocation_id=caller.invocation_id if caller else None,
+            )
+        )
         _emit(trace, meta, result=None, return_type=None)
         return
     return_type = type_name(result)
@@ -298,10 +359,24 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
             preview=preview_of(result) if level >= Level.DEBUG else None,
             value=serialize_value(result) if _capture_values_enabled() else None,
             metadata={"phase": "return"},
+            handoff={
+                "invocation_id": current_invocation.invocation_id if current_invocation else None,
+                "parent_invocation_id": caller.invocation_id if caller else None,
+            },
         )
     fp = fingerprint(result)
     trace.register_return(fp, meta.id)
-    trace.record_event(Event(ts=time.time(), node_id=meta.id, kind="exit", fingerprint=fp, return_type=return_type))
+    trace.record_event(
+        Event(
+            ts=time.time(),
+            node_id=meta.id,
+            kind="exit",
+            fingerprint=fp,
+            return_type=return_type,
+            invocation_id=current_invocation.invocation_id if current_invocation else None,
+            parent_invocation_id=caller.invocation_id if caller else None,
+        )
+    )
     _emit(trace, meta, result=result, return_type=return_type)
 
 
@@ -343,6 +418,7 @@ def _edge_dict(edge: Edge) -> dict[str, Any]:
         "count": edge.count,
         "value": edge.value,
         "metadata": edge.metadata,
+        "handoffs": edge.handoffs,
     }
 
 

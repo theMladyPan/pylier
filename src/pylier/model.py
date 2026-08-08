@@ -71,6 +71,9 @@ class Edge:
     # Entry/exit provenance is display metadata; every edge remains a handoff.
     kind: str = "data"
     metadata: dict = field(default_factory=dict)
+    # Individual execution handoffs are retained even when the graph combines
+    # repeated calls between the same two function nodes.
+    handoffs: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -87,6 +90,8 @@ class Event:
     kind: str  # "enter" | "exit"
     fingerprint: str | None = None
     return_type: str | None = None
+    invocation_id: str | None = None
+    parent_invocation_id: str | None = None
     # edges materialized/observed at this event: {"source","target"} pairs
     edges: list[dict[str, str]] = field(default_factory=list)
 
@@ -132,6 +137,7 @@ class Trace:
         # fingerprint-agnostic: recorder.py computes fingerprints and passes
         # opaque keys here.
         self._derived_sources: dict[str, tuple[str, ...]] = {}
+        self._invocation_sequence = 0
         # live-change notification: two versions sharing one condition.
         # graph_version bumps only when topology changes (new node/edge) so SSE
         # pushes the full graph rarely; exec_version bumps on every enter/exit
@@ -140,6 +146,12 @@ class Trace:
         self.exec_version: int = 0
         self._cond = threading.Condition()
         self._listeners: list = []
+
+    def next_invocation_id(self) -> str:
+        """Return an ID for one recorded function invocation."""
+        with self._cond:
+            self._invocation_sequence += 1
+            return f"{self.id}:{self._invocation_sequence}"
 
     def add_listener(self, listener) -> None:
         """Register a callback notified whenever graph or execution data changes."""
@@ -230,6 +242,7 @@ class Trace:
         payload_types: tuple[str, ...] = (),
         value: str | None = None,
         metadata: dict | None = None,
+        handoff: dict | None = None,
     ) -> Edge:
         with self._cond:
             key = (source, target)
@@ -244,6 +257,7 @@ class Trace:
                     payload_types=payload_types,
                     value=value,
                     metadata=metadata or {},
+                    handoffs=[handoff] if handoff is not None else [],
                 )
                 self.edges[key] = edge
                 self._bump_graph()
@@ -261,6 +275,8 @@ class Trace:
                     edge.payload_types = payload_types
                 if metadata:
                     edge.metadata.update(metadata)
+                if handoff is not None:
+                    edge.handoffs.append(handoff)
             return edge
 
     def register_return(self, fingerprint: str, node_id: str) -> None:
@@ -328,6 +344,7 @@ class Trace:
                         "value": e.value,
                         "kind": e.kind,
                         "metadata": e.metadata,
+                        "handoffs": e.handoffs,
                     }
                     for e in self.edges.values()
                 ],
@@ -341,6 +358,8 @@ class Trace:
                         "ts": ev.ts,
                         "node_id": ev.node_id,
                         "kind": ev.kind,
+                        "invocation_id": ev.invocation_id,
+                        "parent_invocation_id": ev.parent_invocation_id,
                         "edges": ev.edges,
                     }
                     for ev in self.events

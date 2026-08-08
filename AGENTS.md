@@ -45,18 +45,19 @@ tooling without an explicit decision.
   pipeline. Pipeline-step-as-node / context-manager-scopes-as-node were
   rejected as either too boilerplate-y or too complex for nested/branching cases.
 
-### Edge inference = value fingerprinting (content hash)
-- On node exit, the return value is fingerprinted (`<type>:<hash>`) and
-  registered `fingerprint -> source_node`. On the next node's entry, each
-  argument is fingerprinted; a match draws an edge.
-- **Why chosen over a call-stack contextvar:** edges should represent *data
-  movement*, not call nesting. A contextvar keyed on the "current source" misses
-  data passed via storage/queues and mislinks unrelated nested calls.
-- **Accepted trade-off (know it, don't "fix" it silently):** fingerprinting is
-  content-based, so **transformed/aggregated copies don't link** (e.g.
-  `index(vecs_a + vecs_b)` won't edge from `embed`). This is intentional for
-  v0.1 to keep the API at zero. A fingerprint+contextvar *hybrid* is the planned
-  fast-follow — only add it deliberately, not as a drive-by.
+### Edge inference = direct invocation, then fingerprint fallback
+- A nested decorated call creates an exact handoff from its active caller to
+  its callee. The call stack therefore takes precedence over fingerprint
+  lineage: `index(text)` calling `embed(text)` draws `index -> embed`, not
+  `extract -> embed`.
+- Each decorated invocation has a runtime ID. Repeated calls between the same
+  function nodes aggregate in the graph but retain individual handoff records
+  for inspection.
+- When no decorated caller is active, entry arguments are fingerprinted and
+  matched to registered return values. This preserves non-local lineage through
+  storage, queues, and later reuse without corrupting ordinary nested flow.
+- Transformed/aggregated copies still require `pylier.derive(...)` to preserve
+  intentional multi-source lineage.
 
 ### Capture levels: `core < info < debug < trace`
 - Modeled on logfire's `min_level`. A node is recorded only when its declared
@@ -135,7 +136,7 @@ examples/pseudo.py  # canonical nested-handoff example
   Sinks and the viewer consume resolved handoff edges — never fingerprint.
 - **Relation identity is `(source, target)`.** Entry arguments and exit values
   are handoffs in opposite directions; `Edge.metadata["phase"]` is only a UI
-  hint for rendering a curved return path.
+  hint for lane and stroke treatment.
 - **Level filtering runs before instrumentation.** Uncaptured nodes call the
   raw function with zero overhead and register nothing — otherwise they'd
   create phantom edges into captured nodes.
@@ -213,6 +214,6 @@ examples/pseudo.py  # canonical nested-handoff example
 
 - `tracing/otel.py`: OTel receiver consuming exported/logfire spans → graph.
 - Viewer server tailing the sidecar (cross-process live preview).
-- Fingerprint + contextvar hybrid edge inference for transformed copies.
+- Richer visual expansion for the individual handoffs aggregated into one edge.
 - Rendered nodes for declared-but-uncalled `@node`s (registry exists in
   `recorder.make_meta`; wiring to render is the gap).

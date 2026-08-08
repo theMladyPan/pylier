@@ -1075,6 +1075,15 @@ function renderEdgeDetails(l) {
   det.append("div").attr("class", "drow").html(`<span class="k">color</span><span class="v">${payloadCategory(l.payload)}</span>`);
   if (l.size != null) det.append("div").attr("class", "drow").html(`<span class="k">size</span><span class="v">${l.size}</span>`);
   det.append("div").attr("class", "drow").html(`<span class="k">count</span><span class="v">${l.count || 1}×</span>`);
+  if (l.handoffs?.length > 1) {
+    det.append("div").attr("class", "drow").html(`<span class="k">executions</span><span class="v">${l.handoffs.length} distinct calls</span>`);
+    const calls = l.handoffs.map((handoff, index) => ({
+      call: index + 1,
+      invocation: handoff.invocation_id,
+      arguments: handoff.arguments || [],
+    }));
+    det.append("pre").attr("class", "value").text(JSON.stringify(calls, null, 2));
+  }
   if (l.value != null) {
     det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.value);

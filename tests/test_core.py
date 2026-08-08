@@ -46,6 +46,35 @@ def test_trace_root_captures_nested_argument_and_return_handoffs(monkeypatch):
     assert json.loads(handoffs[f2_id, root_id].value) == "42 hello"
 
 
+def test_nested_calls_prefer_direct_caller_handoffs_over_fingerprint_lineage():
+    @pylier.node
+    def extract_text():
+        return ["document"]
+
+    @pylier.node
+    def extract_image_text():
+        return ["image"]
+
+    @pylier.node
+    def embed(chunks: list[str]) -> list[str]:
+        return chunks
+
+    @pylier.node
+    def index(document_text: list[str], image_text: list[str]) -> int:
+        return len(embed(document_text)) + len(embed(image_text))
+
+    with pylier.trace() as trace:
+        index(extract_text(), extract_image_text())
+
+    node_ids = {node.name.rsplit(".", 1)[-1]: node_id for node_id, node in trace.nodes.items()}
+    assert (node_ids["extract_text"], node_ids["embed"]) not in trace.edges
+    assert (node_ids["extract_image_text"], node_ids["embed"]) not in trace.edges
+    embed_inputs = trace.edges[node_ids["index"], node_ids["embed"]]
+    assert embed_inputs.count == 2
+    assert len(embed_inputs.handoffs) == 2
+    assert len({handoff["invocation_id"] for handoff in embed_inputs.handoffs}) == 2
+
+
 def test_sync_edge_inferred_from_returned_value():
     @pylier.node
     def producer():
