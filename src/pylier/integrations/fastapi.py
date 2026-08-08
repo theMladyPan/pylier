@@ -1,15 +1,15 @@
 """FastAPI / Starlette instrumentation for pylier.
 
 A single pure-ASGI middleware that opens one :func:`pylier.trace` per HTTP
-request and stamps the response status onto the trace. Endpoints themselves
+request and stores the response status in generic trace metadata. Endpoints themselves
 stay un-decorated: decorate the service/business functions you call from a
 handler with :func:`pylier.node` and they appear in the request's graph.
 
 Design
 ------
 * Self-contained adapter. Touches only the public pylier surface
-  (``pylier.trace``) and the already-existing ``Trace.endpoint["status_code"]``
-  field. No edits to the recorder or model.
+  (``pylier.trace``) and generic ``Trace.metadata``. No edits to the recorder
+  or model.
 * Pure ASGI (no ``BaseHTTPMiddleware``) so it adds no per-request task and no
   extra dependency beyond what FastAPI already pulls in (starlette).
 * Installed via ``uv add pylier[fastapi]`` and activated with
@@ -69,12 +69,11 @@ class PylierMiddleware:
             try:
                 await self.app(scope, receive, send_wrapper)
             finally:
-                # Trace.endpoint is an existing render-time field ({"name",
-                # "status_code"}); setting it here populates the viewer header
-                # without touching the recorder/model. No version bump needed:
-                # status is read at render time, not via the live event stream.
+                # This adapter owns the HTTP-specific key. The core metadata
+                # bag stays transport-neutral, and a future trace-metadata SSE
+                # event can update an already-open live workspace.
                 if status_code is not None:
-                    trace.endpoint["status_code"] = status_code
+                    trace.metadata["status_code"] = status_code
 
 
 def instrument_fastapi(app: Any) -> Any:

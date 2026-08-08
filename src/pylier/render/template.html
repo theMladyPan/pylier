@@ -119,10 +119,8 @@
   #main.left-collapsed #traces > :not(.pane-head) { display: none; }
   .trace-tab { width: 100%; background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--text); cursor: pointer; font: 11px var(--mono); margin: 3px 0; padding: 9px; text-align: left; }
   .trace-tab:hover { background: var(--panel-2); }.trace-tab.active { background: color-mix(in srgb, var(--accent) 16%, var(--panel-2)); border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border)); }
-  .trace-tab .method { color: var(--st-idle); font-size: 9px; margin-right: 5px; }.trace-tab .meta { color: var(--muted); display: block; font-size: 9px; margin-top: 4px; }
+  .trace-tab .meta { color: var(--muted); display: block; font-size: 9px; margin-top: 4px; }
   #trace-list { padding: 8px; }
-  #endpoint-bar { flex: 0 0 auto; background: var(--panel-bg); border-bottom: 1px solid var(--panel-border); display: flex; gap: 4px; overflow: auto; padding: 7px 12px 0; }
-  .endpoint-tab { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; color: var(--muted); cursor: pointer; font: 11px var(--mono); padding: 7px 10px; white-space: nowrap; }.endpoint-tab.active { background: var(--panel-2); border-color: var(--panel-border); color: var(--accent); }
   #sidebar { border-left: 1px solid var(--panel-border); position: relative; }
   .pane-head {
     height: 40px; padding: 0 10px; border-bottom: 1px solid var(--panel-border);
@@ -248,7 +246,8 @@
   .node rect.status { stroke: none; }
   .node.fastapi rect.body { stroke: var(--accent); stroke-width: 1.5; }
   .node.otel rect.body { stroke: var(--type-tuple); stroke-width: 1.5; }
-  .node.endpoint rect.body { stroke: var(--st-idle); stroke-width: 1.5; }
+  .node .boundary-port { fill: var(--panel-bg); stroke: var(--accent); stroke-width: 2; }
+  .node:hover .boundary-port { fill: color-mix(in srgb, var(--accent) 14%, var(--panel-bg)); stroke-width: 2.5; }
   .node text { pointer-events: none; font-family: var(--mono); }
   .node .num { font-size: 9px; fill: var(--muted); }
   .node .name { font-size: 13px; font-weight: 700; fill: var(--ink); }
@@ -263,11 +262,7 @@
   .link.exception { stroke: #f85149 !important; stroke-dasharray: 1 5; stroke-linecap: round; opacity: .95; }
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
-  .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden, .trace-start.tag-hidden { display: none; }
-  .trace-start { pointer-events: none; }
-  .trace-start path { fill: none; stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 3; opacity: .8; }
-  .trace-start.fastapi path, .trace-start.fastapi text { stroke: var(--type-tuple); fill: var(--type-tuple); }
-  .trace-start text { fill: var(--accent); font: 700 9px var(--mono); letter-spacing: .12em; }
+  .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden { display: none; }
   /* A firing handoff keeps its inferred stroke and fades a type-matched glow. */
   .link.firing {
     filter: drop-shadow(0 0 6px color-mix(in srgb, var(--edge-glow) var(--edge-glow-alpha), transparent));
@@ -286,8 +281,6 @@
 <body>
 <div id="header">
   <h1>pylier</h1>
-  <span class="slash">/</span>
-  <span class="crumb"><b id="h-name">{{NAME}}</b></span>
   <span class="stamp" id="h-stamp">live</span>
   <span class="spacer"></span>
   <span class="dur" id="h-dur"></span>
@@ -335,7 +328,6 @@
     </section>
   </aside>
   <div id="graph-wrap">
-    <div id="endpoint-bar" aria-label="Endpoints"></div>
     <svg id="graph"></svg>
     <footer id="footer" aria-label="Payload type legend and SSE event console">
       <div class="console-resize-handle" id="console-resize" title="Resize SSE console"></div>
@@ -427,12 +419,22 @@ function edgeLabel(d) {
   return members.length ? `tuple<${members.join(", ")}>` : (d.payload || "unknown");
 }
 
-// node card geometry: width grows with the longer of name/module (+ room for
-// the right-aligned latency). Hoisted so collide force + edge router share it.
+// Node geometry is shared by collision and edge routing. A trace boundary is
+// a port, not an algorithm card, so its circle diameter matches card height.
 const NH = 66;
+const BOUNDARY_RADIUS = NH / 2;
 function nodeW(d) {
   const longest = Math.max((d.name || "").length, (d.category || "").length);
   return Math.max(176, longest * 7.2 + 56);
+}
+function nodeHalfWidth(d) {
+  return d.is_root ? BOUNDARY_RADIUS : nodeW(d) / 2;
+}
+function nodeHalfHeight(d) {
+  return d.is_root ? BOUNDARY_RADIUS : NH / 2;
+}
+function nodeCollisionRadius(d) {
+  return Math.hypot(nodeHalfWidth(d), nodeHalfHeight(d));
 }
 function fmtDuration(ms) {
   if (ms == null) return null;
@@ -459,46 +461,25 @@ function loadData() {
   selectedTraceId = selected.id;
   return selected;
 }
-function renderTraceTabs(data) {
+function formatTraceStart(timestamp) {
+  if (typeof timestamp !== "number") return "—";
+  return new Date(timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+function renderTraceHistory() {
   const traces = loadView().traces;
   const traceList = document.getElementById("trace-list");
   traceList.replaceChildren(...traces.map(trace => {
-    const tab = document.createElement("button");
-    tab.className = `trace-tab${trace.id === selectedTraceId ? " active" : ""}`;
-    const root = trace.root || {};
-    if (root.method) {
-      const method = document.createElement("span");
-      method.className = "method";
-      method.textContent = root.method;
-      tab.append(method);
-    }
-    tab.append(document.createTextNode(root.route || trace.name));
+    const entry = document.createElement("button");
+    entry.className = `trace-tab${trace.id === selectedTraceId ? " active" : ""}`;
+    entry.textContent = trace.name || "trace";
+    entry.title = typeof trace.started_at === "number" ? new Date(trace.started_at * 1000).toLocaleString() : "";
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = `${trace.nodes.length} nodes · ${trace.endpoint?.status_code || "recorded"}`;
-    tab.append(meta);
-    tab.addEventListener("click", () => { selectedTraceId = trace.id; active.clear(); state.selected = null; update(); });
-    return tab;
+    meta.textContent = `${trace.nodes.length} nodes · ${formatTraceStart(trace.started_at)}`;
+    entry.append(meta);
+    entry.addEventListener("click", () => { selectedTraceId = trace.id; active.clear(); state.selected = null; update(); });
+    return entry;
   }));
-  const endpointBar = document.getElementById("endpoint-bar");
-  endpointBar.replaceChildren();
-  const endpoints = data.nodes.filter(node => node.kind === "endpoint");
-  const endpointNodes = endpoints.length ? endpoints : [{ id: data.id, name: data.endpoint?.name || data.name || "trace" }];
-  endpointNodes.forEach((endpoint, index) => {
-    const tab = document.createElement("button");
-    tab.className = `endpoint-tab${index === 0 ? " active" : ""}`;
-    tab.textContent = endpoint.name;
-    tab.addEventListener("click", () => {
-      endpointBar.querySelectorAll("button").forEach(button => button.classList.remove("active"));
-      tab.classList.add("active");
-      if (endpoint.id !== data.id && nodeByIdNow(endpoint.id)) {
-        state.selected = endpoint.id;
-        highlight(nodeByIdNow(endpoint.id));
-        renderDetails(nodeByIdNow(endpoint.id));
-      }
-    });
-    endpointBar.append(tab);
-  });
 }
 
 // Live mode is set by the local viewer server. Static bundles may be hosted
@@ -664,7 +645,6 @@ function syncGradients(links) {
   });
 }
 
-const startsG = root.append("g").attr("class", "starts");
 const linksG = root.append("g").attr("class", "links");
 const labelsG = root.append("g").attr("class", "labels");
 const nodesG = root.append("g").attr("class", "nodes");
@@ -673,13 +653,13 @@ const sim = d3.forceSimulation()
   .force("link", d3.forceLink().id(d => d.id).distance(240).strength(0.38))
   .force("charge", d3.forceManyBody().strength(-900).distanceMax(700))
   .force("center", d3.forceCenter(w / 2, h / 2))
-  .force("collide", d3.forceCollide().radius(d => Math.hypot(nodeW(d) / 2, NH / 2) + 28).iterations(2))
+  .force("collide", d3.forceCollide().radius(d => nodeCollisionRadius(d) + 28).iterations(2))
   .alphaDecay(0.018)
   .velocityDecay(0.55);
 
 let nodeData = [];
 let linkData = [];
-let nodeSel = null, linkSel = null, labelSel = null, startSel = null;
+let nodeSel = null, linkSel = null, labelSel = null;
 
 function neighbors(id) {
   const set = new Set([id]);
@@ -725,34 +705,6 @@ function applyTagVisibility() {
   nodeSel.classed("tag-hidden", d => !visible.has(d.id));
   linkSel.classed("tag-hidden", d => !visible.has(endpointId(d.source)) || !visible.has(endpointId(d.target)));
   if (labelSel) labelSel.classed("tag-hidden", d => !visible.has(endpointId(d.source)) || !visible.has(endpointId(d.target)));
-  if (startSel) startSel.classed("tag-hidden", d => !visible.has(d.id));
-}
-
-function traceStartNode(data, nodes) {
-  return nodes.find(node => node.is_root) || nodes.find(node => node.is_start)
-    || nodes.find(node => node.id === (data.events || []).find(event => event.kind === "enter")?.node_id)
-    || nodes[0] || null;
-}
-
-function updateStartMarker(data, nodes) {
-  // Data Flow deliberately hides orchestration/root concepts; its links are
-  // direct producer-to-consumer provenance rather than trace entry paths.
-  const start = state.perspective === "data" ? null : traceStartNode(data, nodes);
-  const startJoin = startsG.selectAll("g.trace-start").data(start ? [start] : [], node => node.id);
-  startJoin.exit().remove();
-  const startEnter = startJoin.enter().append("g").attr("class", "trace-start");
-  startEnter.append("path");
-  startEnter.append("text").text("START");
-  startSel = startJoin.merge(startEnter).attr("class", node => `trace-start${node.kind === "fastapi" ? " fastapi" : ""}`);
-  startSel.select("path").attr("d", node => {
-    const x = -nodeW(node) / 2;
-    const y = -NH / 2;
-    return `M${x - 28},${y - 22}L${x - 5},${y - 5}`;
-  });
-  startSel.select("text")
-    .attr("x", node => -nodeW(node) / 2 - 31)
-    .attr("y", -NH / 2 - 24)
-    .attr("text-anchor", "end");
 }
 
 function renderTagFilters(nodes) {
@@ -774,9 +726,8 @@ function renderTagFilters(nodes) {
 
 function update() {
   const data = loadData();
-  renderTraceTabs(data);
+  renderTraceHistory();
   // header + summary
-  d3.select("#h-name").text(data.name || "trace");
   d3.select("#s-nodes").text(data.nodes.length);
   const dataPerspective = state.perspective === "data";
   d3.select("#s-handoffs-label").text(dataPerspective ? "data transfers" : "handoffs");
@@ -821,27 +772,31 @@ function update() {
   const nodeJoin = nodesG.selectAll("g.node").data(fresh, d => d.id);
   nodeJoin.exit().remove();
   const nodeEnter = nodeJoin.enter().append("g")
-    .attr("class", d => `node ${d.kind || "pylier"}${d.is_async ? " async" : ""}`)
+    .attr("class", d => `node ${d.is_root ? "boundary" : d.kind || "pylier"}${d.is_async ? " async" : ""}`)
     .call(d3.drag()
       .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
       .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
       .on("end", (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
-  nodeEnter.append("rect").attr("class", "body").attr("rx", 3).attr("ry", 3).attr("height", NH).attr("y", -NH / 2);
-  nodeEnter.append("rect").attr("class", "status").attr("x", d => -nodeW(d) / 2).attr("y", -NH / 2).attr("width", 5).attr("height", NH).attr("fill", statusColor);
-  nodeEnter.append("text").attr("class", "num").attr("y", -15);
-  nodeEnter.append("text").attr("class", "name").attr("y", 3);
-  nodeEnter.append("text").attr("class", "module").attr("y", 21);
-  nodeEnter.append("text").attr("class", "lat").attr("y", -15);
+  const boundaryEnter = nodeEnter.filter(d => d.is_root);
+  boundaryEnter.append("circle").attr("class", "boundary-port").attr("r", BOUNDARY_RADIUS);
+  const cardEnter = nodeEnter.filter(d => !d.is_root);
+  cardEnter.append("rect").attr("class", "body").attr("rx", 3).attr("ry", 3).attr("height", NH).attr("y", -NH / 2);
+  cardEnter.append("rect").attr("class", "status").attr("x", d => -nodeW(d) / 2).attr("y", -NH / 2).attr("width", 5).attr("height", NH).attr("fill", statusColor);
+  cardEnter.append("text").attr("class", "num").attr("y", -15);
+  cardEnter.append("text").attr("class", "name").attr("y", 3);
+  cardEnter.append("text").attr("class", "module").attr("y", 21);
+  cardEnter.append("text").attr("class", "lat").attr("y", -15);
   nodeEnter.on("click", (e, d) => { state.selected = d.id; highlight(d); renderDetails(d); });
 
+  const cardOrdinals = new Map(fresh.filter(d => !d.is_root).map((d, index) => [d.id, index + 1]));
   nodeSel = nodeJoin.merge(nodeEnter);
-  nodeSel.attr("class", d => `node ${d.kind || "pylier"}${d.is_async ? " async" : ""}${active.has(d.id) ? " pulsing" : ""}`);
+  nodeSel.attr("class", d => `node ${d.is_root ? "boundary" : d.kind || "pylier"}${d.is_async ? " async" : ""}${active.has(d.id) ? " pulsing" : ""}`);
   nodeSel.select("rect.body").attr("width", nodeW).attr("x", d => -nodeW(d) / 2);
   nodeSel.select("rect.status")
     .attr("x", d => -nodeW(d) / 2).attr("height", NH).attr("y", -NH / 2)
     .attr("fill", statusColor);
   nodeSel.select("text.num")
-    .text((d, i) => String(i + 1).padStart(2, "0"))
+    .text(d => String(cardOrdinals.get(d.id) || "").padStart(2, "0"))
     .attr("x", d => -nodeW(d) / 2 + 13)
     .attr("y", -15);
   nodeSel.select("text.name")
@@ -865,8 +820,6 @@ function update() {
     })
     .attr("x", d => nodeW(d) / 2 - 10)
     .attr("y", -15);
-
-  updateStartMarker(data, fresh);
 
   // --- link join (payload-type color and optional tuple gradient) ---
   syncGradients(links);
@@ -913,7 +866,6 @@ function redrawEdges() {
 sim.on("tick", () => {
   redrawEdges();
   if (nodeSel) nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
-  if (startSel) startSel.attr("transform", d => `translate(${d.x},${d.y})`);
 });
 
 // Rectilinear routing with rounded corners and a guaranteed straight terminal
@@ -947,8 +899,11 @@ function roundedPath(points) {
   return `${path}L${last.x},${last.y}`;
 }
 
-function directCardPoint(node, dx, dy, pad) {
-  const extent = Math.max(Math.abs(dx) / (nodeW(node) / 2 + pad), Math.abs(dy) / (NH / 2 + pad));
+function directNodePoint(node, dx, dy, pad) {
+  const extent = Math.max(
+    Math.abs(dx) / (nodeHalfWidth(node) + pad),
+    Math.abs(dy) / (nodeHalfHeight(node) + pad),
+  );
   return { x: node.x + dx / extent, y: node.y + dy / extent };
 }
 
@@ -960,8 +915,8 @@ function directRoute(d) {
   // return on the opposite side without curves or simulation-dependent force.
   const lane = 8;
   const nx = (-dy / length) * lane, ny = (dx / length) * lane;
-  const rawStart = directCardPoint(s, dx, dy, ROUTE.sourcePad);
-  const rawEnd = directCardPoint(t, -dx, -dy, ROUTE.targetPad);
+  const rawStart = directNodePoint(s, dx, dy, ROUTE.sourcePad);
+  const rawEnd = directNodePoint(t, -dx, -dy, ROUTE.targetPad);
   const start = { x: rawStart.x + nx, y: rawStart.y + ny };
   const end = { x: rawEnd.x + nx, y: rawEnd.y + ny };
   return { path: `M${start.x},${start.y}L${end.x},${end.y}`, x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
@@ -969,7 +924,8 @@ function directRoute(d) {
 
 function linkRoute(d) {
   const s = d.source, t = d.target;
-  const sw = nodeW(s) / 2, tw = nodeW(t) / 2, hh = NH / 2;
+  const sw = nodeHalfWidth(s), tw = nodeHalfWidth(t);
+  const sh = nodeHalfHeight(s), th = nodeHalfHeight(t);
   const dx = t.x - s.x, dy = t.y - s.y;
   const sx = direction(dx, d._idx % 2 ? -1 : 1);
   const sy = direction(dy, d._idx % 2 ? -1 : 1);
@@ -980,8 +936,8 @@ function linkRoute(d) {
   const vLane = -sy * lane;
   const hStart = { x: s.x + sx * (sw + ROUTE.sourcePad), y: s.y + hLane };
   const hEnd = { x: t.x - sx * (tw + ROUTE.targetPad), y: t.y + hLane };
-  const vStart = { x: s.x + vLane, y: s.y + sy * (hh + ROUTE.sourcePad) };
-  const vEnd = { x: t.x + vLane, y: t.y - sy * (hh + ROUTE.targetPad) };
+  const vStart = { x: s.x + vLane, y: s.y + sy * (sh + ROUTE.sourcePad) };
+  const vEnd = { x: t.x + vLane, y: t.y - sy * (th + ROUTE.targetPad) };
   const hClearance = (hEnd.x - hStart.x) * sx;
   const vClearance = (vEnd.y - vStart.y) * sy;
   const turnClearance = ROUTE.approach + ROUTE.corner;
@@ -1022,10 +978,10 @@ function linkRoute(d) {
   // side, route around their expanded bounds, then approach the target straight.
   const side = d._idx % 2 ? -1 : 1;
   const laneY = side > 0
-    ? Math.max(s.y + hh, t.y + hh) + ROUTE.bypass
-    : Math.min(s.y - hh, t.y - hh) - ROUTE.bypass;
-  const start = { x: s.x, y: s.y + side * (hh + ROUTE.sourcePad) };
-  const end = { x: t.x, y: t.y + side * (hh + ROUTE.targetPad) };
+    ? Math.max(s.y + sh, t.y + th) + ROUTE.bypass
+    : Math.min(s.y - sh, t.y - th) - ROUTE.bypass;
+  const start = { x: s.x, y: s.y + side * (sh + ROUTE.sourcePad) };
+  const end = { x: t.x, y: t.y + side * (th + ROUTE.targetPad) };
   const points = [start, { x: start.x, y: laneY }, { x: end.x, y: laneY }, end];
   return { path: roundedPath(points), x: (start.x + end.x) / 2, y: laneY };
 }
@@ -1111,7 +1067,33 @@ function clearHighlight() {
   if (linkSel) linkSel.classed("highlighted", false).classed("dimmed", false);
 }
 
+function formatTraceTimeDetails(timestamp) {
+  return typeof timestamp === "number" ? new Date(timestamp * 1000).toLocaleString() : "—";
+}
+function appendDetailRow(details, key, value) {
+  const row = details.append("div").attr("class", "drow");
+  row.append("span").attr("class", "k").text(key);
+  row.append("span").attr("class", "v").text(value);
+}
+function renderTraceBoundaryDetails() {
+  const trace = loadData();
+  const details = d3.select("#details");
+  details.html("");
+  details.append("h2").text("Trace boundary");
+  appendDetailRow(details, "name", trace.name || "trace");
+  appendDetailRow(details, "started", formatTraceTimeDetails(trace.started_at));
+  if (trace.ended_at != null) appendDetailRow(details, "ended", formatTraceTimeDetails(trace.ended_at));
+  const metadata = trace.metadata || {};
+  const entries = Object.entries(metadata).sort(([left], [right]) => left.localeCompare(right));
+  if (!entries.length) return;
+  details.append("h2").attr("class", "details-subheading").text("Metadata");
+  entries.forEach(([key, value]) => appendDetailRow(details, key, String(value)));
+}
 function renderDetails(d) {
+  if (d.is_root) {
+    renderTraceBoundaryDetails();
+    return;
+  }
   const det = d3.select("#details");
   det.html("");
   det.append("h2").text("Node");

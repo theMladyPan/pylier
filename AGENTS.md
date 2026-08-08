@@ -118,10 +118,10 @@ tooling without an explicit decision.
 
 ### Framework integrations are self-contained adapters, behind extras
 - `pylier.instrument_fastapi(app)` installs a **pure-ASGI middleware** that opens
-  one `pylier.trace("<method> <path>")` per HTTP request and stamps the response
-  status onto `Trace.endpoint["status_code"]`. It touches only the public
-  `pylier.trace` surface and the existing endpoint field — no recorder/model
-  edits. Endpoints stay un-decorated; decorate the service functions called from
+  one `pylier.trace("<method> <path>")` per HTTP request and writes its response
+  status to `Trace.metadata["status_code"]`. `Trace.metadata` is a neutral,
+  primitive-value bag: integrations own their keys; core never models an HTTP
+  endpoint. Endpoints stay un-decorated; decorate service functions called from
   a handler and they appear in that request's graph.
 - **Why:** keeps the core dependency-free and the adapter replaceable. A manual
   edge API or route-mutation (wrapping `APIRoute.endpoint`) was rejected for v1
@@ -130,6 +130,20 @@ tooling without an explicit decision.
   `TraceHistory`). Non-HTTP scopes (lifespan, websocket) pass through untraced.
 - Fast-forward only on request: richer capture (request/response payloads as
   edge metadata, auto-wrapping endpoints as nodes) is a deliberate v1 omission.
+
+### Trace lifecycle and boundary rendering
+- `Trace.started_at` is captured on trace construction; `Trace.ended_at` is set
+  exactly once when a managed `pylier.trace()` context exits. Default traces are
+  intentionally open-ended. The graph serializes both timestamps and generic
+  metadata; clicking the trace boundary exposes every metadata key/value in the
+  inspector.
+- The Application Flow root is an internal source/sink endpoint, **not an
+  algorithm node**. The renderer keeps it in simulation/routing but draws only
+  a clickable circle, with diameter equal to a regular node card's height. Data
+  Flow still hides it because lineage has direct producer-to-consumer edges.
+- The left pane is trace history (`name`, node count, start clock). There is one
+  workspace: a user selection stays active as live history grows, rather than
+  being hijacked by the newest trace.
 
 ## Rules for this file
 - if anything changes you are obligated to edit the paragraph/section so it match the implementation (prevent stale information at all costs)
@@ -250,6 +264,9 @@ examples/pseudo.py  # canonical nested-handoff example
   values for intentionally shareable synthetic/debug runs. Both are bounded by
   `PYLIER_PAYLOAD_MAX_INVOCATIONS` (100) and `PYLIER_PAYLOAD_MAX_BYTES` (100
   MiB), evicting oldest payloads first. Binary payloads are always summaries.
+- Trace metadata and lifecycle changes made after a graph snapshot are not
+  pushed as dedicated live SSE updates yet; the inspector reflects them on the
+  next full graph snapshot/render.
 
 ## Fast-follows (out of v0.1 scope — do only on request)
 
@@ -258,3 +275,7 @@ examples/pseudo.py  # canonical nested-handoff example
 - Richer visual expansion for the individual handoffs aggregated into one edge.
 - Rendered nodes for declared-but-uncalled `@node`s (registry exists in
   `recorder.make_meta`; wiring to render is the gap).
+- Dedicated SSE event for trace attribute/metadata changes, so an open live
+  workspace updates status/lifecycle inspector fields without a topology push.
+- Optional persistent, closable workspace tabs; deliberately removed from the
+  initial trace-history UI until there is a real multi-workspace need.
