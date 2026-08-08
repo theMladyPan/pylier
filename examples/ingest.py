@@ -43,9 +43,12 @@ def embed(chunks: list[str]) -> list[dict]:
 
 
 @pylier.node(_tags=["indexing"])
-def index(vectors: list[dict]) -> int:
+def index(document_text: list[str], image_text: list[str]) -> int:
+    """Embed extracted document and image text, then index every vector."""
     time.sleep(_STEP_DELAY)
-    return len(vectors)
+    document_vectors = embed(document_text)
+    image_vectors = embed(image_text)
+    return len(document_vectors) + len(image_vectors)
 
 
 def run_pipeline(name: str) -> int:
@@ -54,12 +57,7 @@ def run_pipeline(name: str) -> int:
         doc = load_document("report.pdf")
         text_chunks = extract_text(doc)
         image_chunks = ocr_images(doc)
-        text_vecs = embed(text_chunks)
-        image_vecs = embed(image_chunks)
-        # List concatenation creates a new value, so preserve both producers
-        # without adding a synthetic transform node to the graph.
-        vectors = pylier.derive(text_vecs + image_vecs, from_=[text_vecs, image_vecs])
-        total = index(vectors)
+        total = index(text_chunks, image_chunks)
     return total
 
 
@@ -81,11 +79,7 @@ def main(mode: str) -> None:
                     doc = load_document("report.pdf")
                     text_chunks = extract_text(doc)
                     image_chunks = ocr_images(doc)
-                    text_vecs = embed(text_chunks)
-                    image_vecs = embed(image_chunks)
-                    # Keep direct edges from both embedding branches to index.
-                    vectors = pylier.derive(text_vecs + image_vecs, from_=[text_vecs, image_vecs])
-                    total = index(vectors)
+                    total = index(text_chunks, image_chunks)
                     print(f"doc {i}: indexed {total} vectors")
                     time.sleep(2.0)
                 input("press enter to stop...")
