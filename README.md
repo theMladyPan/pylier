@@ -29,9 +29,21 @@
 </td>
 </tr>
 <tr>
-<td align="center"><b>Application Flow</b><br>direct argument, return, and exception handoffs between callers and callees. Suitable to understand how application is made</td>
-<td align="center"><b>Data Flow</b><br>producer-to-consumer value provenance. It links a returned
-  value directly to every decorated consumer. Suitable to understand where and what data goes</td>
+<td valign="top">
+  <p align="center"><b>Application Flow</b></p>
+  <ul>
+    <li>Direct argument, return, and exception handoffs between callers and callees.</li>
+    <li>Use it to understand how the application executes.</li>
+  </ul>
+</td>
+<td valign="top">
+  <p align="center"><b>Data Flow</b></p>
+  <ul>
+    <li>Producer-to-consumer value provenance.</li>
+    <li>Links each returned value directly to every decorated consumer.</li>
+    <li>Use it to understand where data goes and what moves through the pipeline.</li>
+  </ul>
+</td>
 </tr>
 </table>
 
