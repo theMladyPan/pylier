@@ -1,0 +1,60 @@
+name: Publish demos to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Validate project
+        run: uv run pytest -q
+      - name: Render static demos
+        run: |
+          mkdir -p _site
+          uv run python -m examples.ingest html
+          mv pylier-ingest.html _site/ingest.html
+          uv run python -m examples.showcase html --output-dir _site
+          mv _site/pylier-fulfillment-showcase.html _site/fulfillment.html
+          rm _site/pylier-fulfillment-info.html _site/pylier-fulfillment.jsonl
+          cp pages/index.html _site/index.html
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

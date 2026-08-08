@@ -12,6 +12,7 @@ wheels/
 # pylier generated outputs
 *.html
 !mockups/*.html
+!pages/index.html
 !src/pylier/render/template.html
 .pytest_cache/
 .ruff_cache/

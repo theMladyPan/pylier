@@ -55,6 +55,13 @@
 </tr>
 </table>
 
+## Try the rendered demos
+
+Open a self-contained replay in GitHub Pages—no local install or server needed:
+
+- [Document ingestion demo](https://theMladyPan.github.io/pylier/ingest.html)
+- [Fulfillment workflow demo](https://theMladyPan.github.io/pylier/fulfillment.html)
+
 ## Quick start: document ingestion
 
 The [ingestion example](examples/ingest.py) is the fastest way to see pylier's
