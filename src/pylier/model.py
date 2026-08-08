@@ -125,6 +125,9 @@ class Trace:
         # One directed pair represents one handoff stream. Entry and exit use
         # opposite directions, so no relation kind is necessary.
         self.edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
+        # Fingerprint-inferred producer -> consumer relations. Kept separate
+        # from execution handoffs so each view has one unambiguous meaning.
+        self.data_edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
         self.events: list[Event] = []
         # event sinks (e.g. SidecarBackend) notified after each resolved event.
         # Typed loosely to keep this module free of tracing-layer imports.
@@ -132,7 +135,7 @@ class Trace:
         # fp -> source node id that produced this value. Latest producer wins
         # so a transformed-but-equal-content value still links to the most recent
         # origin, which is what callers actually consume.
-        self._fp_index: dict[str, str] = {}
+        self._fp_index: dict[str, tuple[str, str | None]] = {}
         # Derived values retain a resolved set of producer node IDs. This stays
         # fingerprint-agnostic: recorder.py computes fingerprints and passes
         # opaque keys here.
@@ -244,9 +247,36 @@ class Trace:
         metadata: dict | None = None,
         handoff: dict | None = None,
     ) -> Edge:
+        return self._add_edge_to(
+            self.edges,
+            source,
+            target,
+            payload_type=payload_type,
+            size=size,
+            preview=preview,
+            payload_types=payload_types,
+            value=value,
+            metadata=metadata,
+            handoff=handoff,
+        )
+
+    def _add_edge_to(
+        self,
+        collection: OrderedDict[tuple[str, str], Edge],
+        source: str,
+        target: str,
+        *,
+        payload_type: str = "unknown",
+        size: int | None = None,
+        preview: str | None = None,
+        payload_types: tuple[str, ...] = (),
+        value: str | None = None,
+        metadata: dict | None = None,
+        handoff: dict | None = None,
+    ) -> Edge:
         with self._cond:
             key = (source, target)
-            edge = self.edges.get(key)
+            edge = collection.get(key)
             if edge is None:
                 edge = Edge(
                     source=source,
@@ -259,7 +289,7 @@ class Trace:
                     metadata=metadata or {},
                     handoffs=[handoff] if handoff is not None else [],
                 )
-                self.edges[key] = edge
+                collection[key] = edge
                 self._bump_graph()
             else:
                 edge.count += 1
@@ -279,11 +309,11 @@ class Trace:
                     edge.handoffs.append(handoff)
             return edge
 
-    def register_return(self, fingerprint: str, node_id: str) -> None:
+    def register_return(self, fingerprint: str, node_id: str, invocation_id: str | None) -> None:
         """Register the latest direct producer for a fingerprint."""
         with self._cond:
             self._derived_sources.pop(fingerprint, None)
-            self._fp_index[fingerprint] = node_id
+            self._fp_index[fingerprint] = (node_id, invocation_id)
 
     def register_derived_sources(self, fingerprint: str, source_ids: tuple[str, ...]) -> None:
         """Register resolved producers for a value derived outside a node."""
@@ -298,7 +328,39 @@ class Trace:
             if derived_sources is not None:
                 return derived_sources
             direct_source = self._fp_index.get(fingerprint)
-            return (direct_source,) if direct_source is not None else ()
+            return (direct_source[0],) if direct_source is not None else ()
+
+    def lookup_producers(self, fingerprint: str) -> tuple[tuple[str, str | None, str], ...]:
+        """Return producer node, invocation, and provenance for a value."""
+        with self._cond:
+            derived_sources = self._derived_sources.get(fingerprint)
+            if derived_sources is not None:
+                return tuple((source_id, None, "derive") for source_id in derived_sources)
+            direct_source = self._fp_index.get(fingerprint)
+            if direct_source is None:
+                return ()
+            return ((direct_source[0], direct_source[1], "fingerprint"),)
+
+    def add_data_edge(self, source: str, target: str, **kwargs) -> Edge:
+        """Add an aggregated fingerprint-inferred producer/consumer relation."""
+        return self._add_edge_to(self.data_edges, source, target, **kwargs)
+
+    @staticmethod
+    def _edge_dict(edge: Edge) -> dict:
+        """Serialize one relation identically for either graph perspective."""
+        return {
+            "source": edge.source,
+            "target": edge.target,
+            "payload": edge.payload_type,
+            "size": edge.size,
+            "preview": edge.preview,
+            "payload_types": list(edge.payload_types),
+            "count": edge.count,
+            "value": edge.value,
+            "kind": edge.kind,
+            "metadata": edge.metadata,
+            "handoffs": edge.handoffs,
+        }
 
     def to_graph_dict(self) -> dict:
         """Serialize to the JSON shape consumed by the D3 renderer.
@@ -332,27 +394,19 @@ class Trace:
                     }
                     for n in graph_nodes
                 ],
-                "links": [
-                    {
-                        "source": e.source,
-                        "target": e.target,
-                        "payload": e.payload_type,
-                        "size": e.size,
-                        "preview": e.preview,
-                        "payload_types": list(e.payload_types),
-                        "count": e.count,
-                        "value": e.value,
-                        "kind": e.kind,
-                        "metadata": e.metadata,
-                        "handoffs": e.handoffs,
-                    }
-                    for e in self.edges.values()
-                ],
+                # ``links`` remains the application-flow alias for existing
+                # renderers and sidecar consumers.
+                "links": [self._edge_dict(e) for e in self.edges.values()],
+                "perspectives": {
+                    "application": {"links": [self._edge_dict(e) for e in self.edges.values()]},
+                    "data": {"links": [self._edge_dict(e) for e in self.data_edges.values()]},
+                },
                 # execution timeline: drives the fire/pulse animation. Static
                 # renders replay this once on load; the live viewer receives the
                 # same events incrementally via SSE.
                 "total_ms": sum(n.last_ms or 0 for n in graph_nodes),
                 "handoffs": sum(e.count for e in self.edges.values()),
+                "data_transfers": sum(e.count for e in self.data_edges.values()),
                 "events": [
                     {
                         "ts": ev.ts,

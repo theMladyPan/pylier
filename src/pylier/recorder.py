@@ -9,11 +9,10 @@ Design notes
 * Capture level filters *before* instrumentation: nodes above the active level
   are called with zero overhead and never recorded, so uncaptured nodes can't
   create phantom edges.
-* Edge inference: on node exit we fingerprint the return value and register
-  ``fp -> this_node``. On node entry we fingerprint each positional/kw arg and
-  link any matching prior producer. This is the only place values are
-  fingerprinted; everything downstream (sidecar, viewer) consumes resolved
-  edges.
+* Application Flow uses the invocation stack: a direct caller or trace root
+  hands arguments to a node and receives its result.
+* Data Flow fingerprints values at node exits and entries. Its producer/consumer
+  relations are recorded separately, so lineage never changes call structure.
 """
 
 from __future__ import annotations
@@ -273,6 +272,28 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
     arguments.update(kwargs)
     fired: list[dict[str, str]] = []
     handoff_details = _argument_handoff_details(args, kwargs, arguments, level, capture)
+    # Data Flow intentionally observes every matching argument even when an
+    # active caller provides the authoritative Application Flow handoff.
+    for parameter_name, argument_value in arguments.items():
+        if argument_value is None:
+            continue
+        for producer_id, producer_invocation_id, provenance in trace.lookup_producers(fingerprint(argument_value)):
+            trace.add_data_edge(
+                producer_id,
+                meta.id,
+                payload_type=type_name(argument_value),
+                size=size_of(argument_value) if level >= Level.INFO else None,
+                preview=preview_of(argument_value) if level >= Level.DEBUG else None,
+                payload_types=tuple_member_type_names(argument_value),
+                value=serialize_value(argument_value) if capture else None,
+                metadata={"perspective": "data"},
+                handoff={
+                    "producer_invocation_id": producer_invocation_id,
+                    "consumer_invocation_id": invocation_id,
+                    "parameter": parameter_name,
+                    "provenance": provenance,
+                },
+            )
 
     if caller is not None:
         trace.add_edge(
@@ -360,8 +381,27 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
                 "parent_invocation_id": caller.invocation_id if caller else None,
             },
         )
+    # A nested return is a real data consumption by its decorated caller even
+    # though no second function-entry event occurs for that local assignment.
+    if result is not None and caller is not None:
+        trace.add_data_edge(
+            meta.id,
+            caller.node_id,
+            payload_type=return_type,
+            size=size_of(result) if level >= Level.INFO else None,
+            preview=preview_of(result) if level >= Level.DEBUG else None,
+            payload_types=tuple_member_type_names(result),
+            value=serialize_value(result) if _capture_values_enabled() else None,
+            metadata={"perspective": "data"},
+            handoff={
+                "producer_invocation_id": current_invocation.invocation_id if current_invocation else None,
+                "consumer_invocation_id": caller.invocation_id,
+                "parameter": "return",
+                "provenance": "return",
+            },
+        )
     fp = fingerprint(result)
-    trace.register_return(fp, meta.id)
+    trace.register_return(fp, meta.id, current_invocation.invocation_id if current_invocation else None)
     trace.record_event(
         Event(
             ts=time.time(),
@@ -383,9 +423,13 @@ def _emit(trace: Trace, meta: NodeMeta, result: Any, return_type: str | None) ->
     level = current_level()
     # Emit a compact, replayable event: the node and every edge into it.
     edges_out: list[dict[str, Any]] = []
+    data_edges_out: list[dict[str, Any]] = []
     for (_src, tgt), edge in trace.edges.items():
         if tgt == meta.id:
             edges_out.append(_edge_dict(edge))
+    for (_src, tgt), edge in trace.data_edges.items():
+        if tgt == meta.id:
+            data_edges_out.append(_edge_dict(edge))
     event = {
         "ts": time.time(),
         "node_id": meta.id,
@@ -396,6 +440,7 @@ def _emit(trace: Trace, meta: NodeMeta, result: Any, return_type: str | None) ->
         "return_type": return_type,
         "result_preview": preview_of(result) if level >= Level.DEBUG and result is not None else None,
         "edges": edges_out,
+        "data_edges": data_edges_out,
     }
     for sink in trace.sinks:
         # sinks must never break the recording run

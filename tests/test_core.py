@@ -73,6 +73,36 @@ def test_nested_calls_prefer_direct_caller_handoffs_over_fingerprint_lineage():
     assert embed_inputs.count == 2
     assert len(embed_inputs.handoffs) == 2
     assert len({handoff["invocation_id"] for handoff in embed_inputs.handoffs}) == 2
+    # Data Flow restores lineage without changing the invocation graph.
+    assert (node_ids["extract_text"], node_ids["embed"]) in trace.data_edges
+    assert (node_ids["extract_image_text"], node_ids["embed"]) in trace.data_edges
+    assert (node_ids["embed"], node_ids["index"]) in trace.data_edges
+
+
+def test_data_flow_keeps_producer_consumer_lineage_separate_from_application_flow():
+    @pylier.node
+    def load_document():
+        return {"pages": ["one"]}
+
+    @pylier.node
+    def extract_text(document):
+        return document["pages"]
+
+    with pylier.trace("lineage") as trace:
+        extract_text(load_document())
+
+    ids = {node.name.rsplit(".", 1)[-1]: node_id for node_id, node in trace.nodes.items()}
+    # Top-level invocation belongs to the orchestration root, not its producer.
+    assert (trace.root_node_id, ids["extract_text"]) in trace.edges
+    assert (ids["load_document"], ids["extract_text"]) not in trace.edges
+
+    data_edge = trace.data_edges[ids["load_document"], ids["extract_text"]]
+    assert data_edge.payload_type == "dict"
+    assert data_edge.handoffs[0]["parameter"] == "document"
+    assert data_edge.handoffs[0]["provenance"] == "fingerprint"
+    graph = trace.to_graph_dict()
+    assert graph["links"] != graph["perspectives"]["data"]["links"]
+    assert graph["perspectives"]["data"]["links"][0]["source"] == ids["load_document"]
 
 
 def test_sync_edge_inferred_from_returned_value():

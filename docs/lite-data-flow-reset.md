@@ -1,5 +1,5 @@
-# Direct handoff precedence
+# Application and data-flow perspectives
 
-Nested decorated calls use their active invocation as the authoritative handoff, while top-level calls use the trace root as their implicit orchestration caller. Repeated calls between the same function nodes aggregate visually but retain distinct invocation records for inspection; fingerprints remain internal provenance for `pylier.derive(...)` rather than default graph edges.
+Application Flow uses direct invocation handoffs: nested decorated calls use their active caller and top-level calls use the trace root. Data Flow separately records fingerprint-inferred producer-to-consumer relations, including every decorated consumer of a matching value; its links exclude roots, unmatched values, `None`, exceptions, and control-only handoffs.
 
-This keeps ordinary function flow truthful without losing provenance needed for explicit derived values and future lineage inspection.
+The renderer selects either perspective from one trace snapshot. Repeated function-pair links aggregate visually while retaining invocation-level handoffs for inspection; `pylier.derive(...)` preserves intentional multi-producer data provenance.

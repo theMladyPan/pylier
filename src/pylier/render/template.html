@@ -271,6 +271,11 @@
       </section>
       <section class="controls">
         <h2>View</h2>
+        <div class="edge-mode" role="group" aria-label="Graph perspective">
+          <span>Perspective</span>
+          <label><input type="radio" name="perspective" value="application" checked /> Application Flow</label>
+          <label><input type="radio" name="perspective" value="data" /> Data Flow</label>
+        </div>
         <div class="edge-mode" role="group" aria-label="Edge routing">
           <span>Edges</span>
           <label><input type="radio" name="edge-mode" value="rectilinear" checked /> Rectilinear</label>
@@ -313,7 +318,7 @@
       <section class="summary" id="summary">
         <h2>Run summary</h2>
         <div class="row"><span>nodes</span><b id="s-nodes">0</b></div>
-        <div class="row"><span>handoffs</span><b id="s-handoffs">0</b></div>
+        <div class="row"><span id="s-handoffs-label">handoffs</span><b id="s-handoffs">0</b></div>
         <div class="row"><span>duration</span><b id="s-dur">—</b></div>
         <div class="row"><span>trace</span><b id="s-trace">—</b></div>
       </section>
@@ -538,7 +543,10 @@ if (LIVE) {
   es.onerror = () => { es.close(); };
 }
 
-let state = { showLabels: true, animate: true, showFramework: false, edgeMode: "rectilinear", selected: null, tagFilter: new Set(), tagMode: "any" };
+let state = { showLabels: true, animate: true, showFramework: false, edgeMode: "rectilinear", perspective: "application", selected: null, tagFilter: new Set(), tagMode: "any" };
+function perspectiveLinks(data) {
+  return data.perspectives?.[state.perspective]?.links || data.links || [];
+}
 // nodes currently executing (enter seen, exit not) — drives the status stripe
 const active = new Set();
 
@@ -702,7 +710,9 @@ function update() {
   // header + summary
   d3.select("#h-name").text(data.name || "trace");
   d3.select("#s-nodes").text(data.nodes.length);
-  d3.select("#s-handoffs").text(data.handoffs || 0);
+  const dataPerspective = state.perspective === "data";
+  d3.select("#s-handoffs-label").text(dataPerspective ? "data transfers" : "handoffs");
+  d3.select("#s-handoffs").text(dataPerspective ? (data.data_transfers || 0) : (data.handoffs || 0));
   const totalMs = data.total_ms || 0;
   d3.select("#s-dur").text(totalMs ? `${totalMs.toFixed(1)} ms` : "—");
   d3.select("#h-dur").text(totalMs ? `${(totalMs / 1000).toFixed(2)} s total` : "");
@@ -713,7 +723,7 @@ function update() {
 
   const prevById = new Map(nodeData.map(n => [n.id, n]));
   const prevNodeIds = new Set(prevById.keys());
-  const displayedNodes = data.nodes;
+  const displayedNodes = state.perspective === "data" ? data.nodes.filter(node => !node.is_root) : data.nodes;
   const fresh = displayedNodes.map((d, i) => {
     const prev = prevById.get(d.id);
     if (prev) return Object.assign(prev, d);
@@ -723,7 +733,7 @@ function update() {
   const nodeById = new Map(fresh.map(n => [n.id, n]));
 
   renderTagFilters(fresh);
-  const links = data.links
+  const links = perspectiveLinks(data)
     .map((l, i) => ({ ...l, _idx: i }))
     .filter(l => nodeById.has(l.source) && nodeById.has(l.target));
 
@@ -1130,6 +1140,12 @@ d3.select("#b-reset").on("click", () => {
 d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
 d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
 d3.selectAll('input[name="edge-mode"]').on("change", e => setEdgeMode(e.target.value));
+d3.selectAll('input[name="perspective"]').on("change", e => {
+  state.perspective = e.target.value === "data" ? "data" : "application";
+  state.selected = null;
+  active.clear();
+  update();
+});
 d3.selectAll('input[name="tag-mode"]').on("change", e => { state.tagMode = e.target.value; update(); });
 
 const main = document.getElementById("main");

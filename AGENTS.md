@@ -45,18 +45,17 @@ tooling without an explicit decision.
   pipeline. Pipeline-step-as-node / context-manager-scopes-as-node were
   rejected as either too boilerplate-y or too complex for nested/branching cases.
 
-### Edge inference = direct invocation, then fingerprint fallback
-- A nested decorated call creates an exact handoff from its active caller to
-  its callee. The call stack therefore takes precedence over fingerprint
-  lineage: `index(text)` calling `embed(text)` draws `index -> embed`, not
-  `extract -> embed`.
-- Each decorated invocation has a runtime ID. Repeated calls between the same
-  function nodes aggregate in the graph but retain individual handoff records
-  for inspection.
-- The trace root is the implicit caller when no decorated caller is active.
-  Fingerprints remain internal provenance for `pylier.derive(...)` and future
-  lineage inspection; they never bypass execution boundaries in the graph.
-- Transformed/aggregated copies still require `pylier.derive(...)` to preserve
+### Two graph perspectives: invocation and lineage
+- **Application Flow** is direct invocation handoff: a nested decorated call
+  receives data from its active caller, while a top-level call receives it from
+  the trace root. It never draws a fingerprint bypass edge.
+- **Data Flow** separately records fingerprint-inferred producer-to-consumer
+  relations for every decorated consumer of a matching non-empty value. It
+  hides the root and unmatched external inputs/outputs.
+- Each decorated invocation has a runtime ID. Repeated function-pair links
+  aggregate visually but retain individual handoffs for inspection in both
+  perspectives.
+- Transformed/aggregated copies require `pylier.derive(...)` to preserve
   intentional multi-source lineage.
 
 ### Capture levels: `core < info < debug < trace`
