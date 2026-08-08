@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from pylier.fingerprint import fingerprint, preview_of, serialize_value, size_of, tuple_member_type_names, type_name
-from pylier.model import Edge, Event, Level, Node, Trace
+from pylier.model import Edge, Event, Level, Node, Trace, TraceHistory
 
 __all__ = [
     "NodeMeta",
@@ -40,6 +40,8 @@ __all__ = [
     "resolve_trace",
     "use_trace",
     "reset_trace",
+    "trace_history",
+    "register_trace",
     "set_level",
     "level_context",
     "current_level",
@@ -56,6 +58,7 @@ _default_trace: Trace | None = None
 # called *after* a ``with pylier.trace(...)`` block renders that block's trace
 # instead of the (empty) process default.
 _last_trace: Trace | None = None
+_history = TraceHistory()
 
 
 @dataclass(frozen=True)
@@ -82,8 +85,18 @@ def default_trace() -> Trace:
     """Return (creating if needed) the process-wide default trace."""
     global _default_trace
     if _default_trace is None:
-        _default_trace = Trace("default")
+        _default_trace = register_trace(Trace("default"))
     return _default_trace
+
+
+def trace_history() -> TraceHistory:
+    """Return the in-process trace history used by the live request viewer."""
+    return _history
+
+
+def register_trace(trace: Trace) -> Trace:
+    """Retain ``trace`` for live debugging and return it unchanged."""
+    return _history.add(trace)
 
 
 def mark_last_trace(trace: Trace) -> None:
@@ -217,6 +230,7 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> Non
     (source -> this) pair is a data handoff the renderer should glow on.
     """
     trace.get_or_create_node(_make_node(meta))
+    trace.link_request_root(meta.id)
     level = current_level()
     capture = _capture_values_enabled()
     fired: list[dict[str, str]] = []

@@ -31,6 +31,7 @@ from pylier.recorder import (
 )
 from pylier.recorder import (
     mark_last_trace,
+    register_trace,
     reset_trace,
     resolve_trace,
     use_trace,
@@ -55,6 +56,7 @@ __all__ = [
     "Node",
     "Edge",
     "Event",
+    "instrument_fastapi",
     "__version__",
 ]
 
@@ -113,7 +115,7 @@ def trace(name: str = "trace", *, sidecar: bool | str | Path = False):
     Yields:
         The :class:`Trace` for the block.
     """
-    t = Trace(name=name)
+    t = register_trace(Trace(name=name))
     if sidecar:
         _attach_sidecar(t, sidecar)
     mark_last_trace(t)
@@ -154,6 +156,21 @@ def set_level(level: Level | str):
 
 # keep `level` as an alias users may find more natural
 level = set_level
+
+
+def instrument_fastapi(app: Any) -> None:
+    """Attach pylier request capture to an OTel-instrumented FastAPI app.
+
+    The application's OpenTelemetry middleware must be outermost so its server
+    span is current when pylier handles the request. No FastAPI or OTel package
+    is imported until this function is called.
+
+    Args:
+        app: A FastAPI application exposing ``add_middleware``.
+    """
+    from pylier.integrations.fastapi import instrument_fastapi as _instrument_fastapi
+
+    _instrument_fastapi(app)
 
 
 def _attach_sidecar(t: Trace, sidecar: bool | str | Path) -> None:

@@ -20,7 +20,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from pylier.model import Trace
+from pylier.model import Trace, TraceHistory
 from pylier.render import build_html
 
 __all__ = ["serve"]
@@ -34,7 +34,8 @@ def serve(trace: Trace | None = None, port: int = 8765, *, open_browser: bool = 
     """Start the live viewer server in a background thread and return it.
 
     Args:
-        trace: Trace to visualize. Defaults to the active/default trace.
+        trace: Trace to visualize alone. When omitted, show the retained in-process
+            history with the newest trace selected.
         port: Port to listen on.
         open_browser: If True, attempt to open the viewer in the default browser.
 
@@ -42,11 +43,13 @@ def serve(trace: Trace | None = None, port: int = 8765, *, open_browser: bool = 
         The running :class:`ThreadingHTTPServer` (call ``shutdown()`` to stop).
     """
     if trace is None:
-        from pylier.recorder import resolve_trace
+        from pylier.recorder import trace_history
 
-        trace = resolve_trace()
+        source: Trace | TraceHistory = trace_history()
+    else:
+        source = trace
 
-    server = _make_server(trace, port)
+    server = _make_server(source, port)
 
     thread = threading.Thread(target=server.serve_forever, daemon=True, name="pylier-viewer")
     thread.start()
@@ -59,8 +62,13 @@ def serve(trace: Trace | None = None, port: int = 8765, *, open_browser: bool = 
     return server
 
 
-def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
+def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
     captured_trace = trace
+
+    def graph_payload() -> dict:
+        if isinstance(captured_trace, TraceHistory):
+            return captured_trace.to_view_dict()
+        return captured_trace.to_graph_dict()
 
     class Handler(BaseHTTPRequestHandler):
         # keep SSE handler threads from blocking shutdown
@@ -80,11 +88,21 @@ def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
 
         def do_GET(self) -> None:  # noqa: N802 - http.server API
             if self.path in ("/", "/index.html"):
-                self._send(build_html(captured_trace).encode("utf-8"), "text/html; charset=utf-8")
+                initial_trace = (
+                    next(iter(captured_trace.traces.values()), Trace())
+                    if isinstance(captured_trace, TraceHistory)
+                    else captured_trace
+                )
+                self._send(
+                    build_html(
+                        initial_trace, history=captured_trace if isinstance(captured_trace, TraceHistory) else None
+                    ).encode("utf-8"),
+                    "text/html; charset=utf-8",
+                )
             elif self.path == "/graph":
                 # kept for debugging / non-SSE clients; the page itself uses /events
                 self._send(
-                    json.dumps(captured_trace.to_graph_dict(), default=str).encode("utf-8"),
+                    json.dumps(graph_payload(), default=str).encode("utf-8"),
                     "application/json",
                 )
             elif self.path == "/events":
@@ -109,18 +127,23 @@ def _make_server(trace: Trace, port: int) -> ThreadingHTTPServer:
             graph_since = -1  # forces an immediate full-graph send on connect
             exec_version_since = 0
             event_index_since = 0
+            history_version = -1
             try:
                 while True:
-                    graph_v, exec_v = captured_trace.wait_for_change(
-                        graph_since, exec_version_since, timeout=_SSE_HEARTBEAT
-                    )
+                    if isinstance(captured_trace, TraceHistory):
+                        history_version = captured_trace.wait_for_change(history_version, timeout=_SSE_HEARTBEAT)
+                        graph_v, exec_v = history_version, 0
+                    else:
+                        graph_v, exec_v = captured_trace.wait_for_change(
+                            graph_since, exec_version_since, timeout=_SSE_HEARTBEAT
+                        )
                     wrote = False
                     if graph_v > graph_since:
-                        payload = json.dumps(captured_trace.to_graph_dict(), default=str)
+                        payload = json.dumps(graph_payload(), default=str)
                         self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
                         graph_since = graph_v
                         wrote = True
-                    if exec_v > exec_version_since:
+                    if not isinstance(captured_trace, TraceHistory) and exec_v > exec_version_since:
                         event_index_since, new_events = captured_trace.events_since(event_index_since)
                         # Latency updates advance the execution version without adding a
                         # timeline event. Advance its cursor either way; otherwise the

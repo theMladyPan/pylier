@@ -565,6 +565,60 @@ def test_sse_latency_update_does_not_emit_empty_exec_batches():
         server.server_close()
 
 
+def test_fastapi_request_trace_serializes_root_and_control_handoff():
+    from opentelemetry import context as otel_context
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
+
+    from pylier.integrations.fastapi import PylierASGIMiddleware
+    from pylier.model import TraceHistory
+
+    @pylier.node
+    def endpoint_algorithm():
+        return {"ok": True}
+
+    async def app(scope, receive, send):
+        endpoint_algorithm()
+        await send({"type": "http.response.start", "status": 201, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(_message):
+        return None
+
+    history = TraceHistory()
+    middleware = PylierASGIMiddleware(app, history=history)
+    span_context = SpanContext(
+        trace_id=0x1234,
+        span_id=0x5678,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    token = otel_context.attach(set_span_in_context(NonRecordingSpan(span_context)))
+    try:
+        asyncio.run(
+            middleware(
+                {"type": "http", "method": "POST", "path": "/documents", "headers": []},
+                receive,
+                send,
+            )
+        )
+    finally:
+        otel_context.detach(token)
+
+    graph = history.to_view_dict()["traces"][0]
+    root = next(node for node in graph["nodes"] if node["kind"] == "fastapi")
+    assert root["name"] == "POST /documents"
+    assert root["is_start"] is True
+    assert graph["root"]["otel_trace_id"] == f"{0x1234:032x}"
+    assert graph["endpoint"]["status_code"] == 201
+    assert next(node for node in graph["nodes"] if node["name"].endswith("endpoint_algorithm"))["kind"] == "endpoint"
+    control = next(link for link in graph["links"] if link["kind"] == "control")
+    assert control["source"] == root["id"]
+    assert control["target"].endswith("endpoint_algorithm")
+
+
 def test_versions_split_topology_vs_execution():
     @pylier.node
     def produce():

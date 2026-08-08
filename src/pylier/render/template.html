@@ -91,14 +91,13 @@
   #header .theme-btn:hover { border-color: var(--accent); }
 
   #main {
-    --filter-w: 240px;
-    --sidebar-w: 320px;
-    flex: 1; display: grid; grid-template-columns: var(--filter-w) minmax(0, 1fr) var(--sidebar-w);
+    --trace-w: 238px; --filter-w: 240px; --sidebar-w: 320px;
+    flex: 1; display: grid; grid-template-columns: var(--trace-w) var(--filter-w) minmax(0, 1fr) var(--sidebar-w);
     min-height: 0;
   }
-  #main.filters-collapsed { grid-template-columns: 34px minmax(0, 1fr) var(--sidebar-w); }
-  #main.sidebar-collapsed { grid-template-columns: var(--filter-w) minmax(0, 1fr) 34px; }
-  #main.filters-collapsed.sidebar-collapsed { grid-template-columns: 34px minmax(0, 1fr) 34px; }
+  #main.filters-collapsed { grid-template-columns: var(--trace-w) 34px minmax(0, 1fr) var(--sidebar-w); }
+  #main.sidebar-collapsed { grid-template-columns: var(--trace-w) var(--filter-w) minmax(0, 1fr) 34px; }
+  #main.filters-collapsed.sidebar-collapsed { grid-template-columns: var(--trace-w) 34px minmax(0, 1fr) 34px; }
   #graph-wrap { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   #graph {
     flex: 1; min-width: 0; min-height: 0; height: auto; background: var(--bg);
@@ -107,8 +106,14 @@
   }
   svg { width: 100%; height: 100%; display: block; }
 
-  #filters, #sidebar { background: var(--panel-bg); overflow: auto; min-width: 0; }
-  #filters { border-right: 1px solid var(--panel-border); }
+  #traces, #filters, #sidebar { background: var(--panel-bg); overflow: auto; min-width: 0; }
+  #traces, #filters { border-right: 1px solid var(--panel-border); }
+  .trace-tab { width: 100%; background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--text); cursor: pointer; font: 11px var(--mono); margin: 3px 0; padding: 9px; text-align: left; }
+  .trace-tab:hover { background: var(--panel-2); }.trace-tab.active { background: color-mix(in srgb, var(--accent) 16%, var(--panel-2)); border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border)); }
+  .trace-tab .method { color: var(--st-idle); font-size: 9px; margin-right: 5px; }.trace-tab .meta { color: var(--muted); display: block; font-size: 9px; margin-top: 4px; }
+  #trace-list { padding: 8px; }
+  #endpoint-bar { flex: 0 0 auto; background: var(--panel-bg); border-bottom: 1px solid var(--panel-border); display: flex; gap: 4px; overflow: auto; padding: 7px 12px 0; }
+  .endpoint-tab { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; color: var(--muted); cursor: pointer; font: 11px var(--mono); padding: 7px 10px; white-space: nowrap; }.endpoint-tab.active { background: var(--panel-2); border-color: var(--panel-border); color: var(--accent); }
   #sidebar { border-left: 1px solid var(--panel-border); position: relative; }
   .pane-head {
     height: 40px; padding: 0 10px; border-bottom: 1px solid var(--panel-border);
@@ -206,11 +211,13 @@
 
   /* Match the mockup's fine-line, low-noise graph treatment. */
   .link { fill: none; opacity: .8; stroke-width: 1.5px; }
+  .link.control { stroke: var(--type-tuple) !important; stroke-dasharray: 4 4; }
   .link.highlighted { opacity: 1; stroke-width: 2px; }
   .link.dimmed { opacity: .12; }
   .node.tag-hidden, .link.tag-hidden, .edge-label.tag-hidden, .trace-start.tag-hidden { display: none; }
   .trace-start { pointer-events: none; }
   .trace-start path { fill: none; stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 3; opacity: .8; }
+  .trace-start.fastapi path, .trace-start.fastapi text { stroke: var(--type-tuple); fill: var(--type-tuple); }
   .trace-start text { fill: var(--accent); font: 700 9px var(--mono); letter-spacing: .12em; }
   /* A firing handoff keeps its inferred stroke and fades a type-matched glow. */
   .link.firing {
@@ -238,6 +245,10 @@
   <button class="theme-btn" id="b-theme">☀ light</button>
 </div>
 <div id="main">
+  <aside id="traces" aria-label="Recorded root traces">
+    <div class="pane-head"><h2>Root traces</h2></div>
+    <div id="trace-list"></div>
+  </aside>
   <aside id="filters" aria-label="Filters">
     <div class="pane-head"><h2>Filters</h2><button class="pane-toggle" id="b-filters" title="Collapse filters">‹</button></div>
     <div class="pane-content">
@@ -267,6 +278,7 @@
     </div>
   </aside>
   <div id="graph-wrap">
+    <div id="endpoint-bar" aria-label="Endpoints"></div>
     <svg id="graph"></svg>
     <footer id="footer" aria-label="Payload type legend and SSE event console">
       <div class="footer-bar">
@@ -369,13 +381,65 @@ function fmtMs(v) {
   return v < 1 ? v.toFixed(2) : v < 100 ? Math.round(v) + "" : Math.round(v) + "";
 }
 
+let selectedTraceId = null;
+function loadView() {
+  const source = liveData || RAW;
+  if (source && Array.isArray(source.traces)) return source;
+  if (source && source.nodes) return { traces: [source] };
+  const text = document.getElementById("embedded-data").textContent.trim();
+  if (text.startsWith("{")) {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed.traces) ? parsed : { traces: [parsed] };
+  }
+  return { traces: [] };
+}
 function loadData() {
-  if (liveData && liveData.nodes) return liveData;
-  if (RAW && RAW.nodes && RAW.nodes.length) return RAW;
-  const el = document.getElementById("embedded-data");
-  const txt = el.textContent.trim();
-  if (txt.startsWith("{")) return JSON.parse(txt);
-  return { nodes: [], links: [], categories: [], dataTypes: [], events: [] };
+  const traces = loadView().traces;
+  if (!traces.length) return { nodes: [], links: [], categories: [], dataTypes: [], events: [] };
+  const selected = traces.find(trace => trace.id === selectedTraceId) || traces[0];
+  selectedTraceId = selected.id;
+  return selected;
+}
+function renderTraceTabs(data) {
+  const traces = loadView().traces;
+  const traceList = document.getElementById("trace-list");
+  traceList.replaceChildren(...traces.map(trace => {
+    const tab = document.createElement("button");
+    tab.className = `trace-tab${trace.id === selectedTraceId ? " active" : ""}`;
+    const root = trace.root || {};
+    if (root.method) {
+      const method = document.createElement("span");
+      method.className = "method";
+      method.textContent = root.method;
+      tab.append(method);
+    }
+    tab.append(document.createTextNode(root.route || trace.name));
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = `${trace.nodes.length} nodes · ${trace.endpoint?.status_code || "recorded"}`;
+    tab.append(meta);
+    tab.addEventListener("click", () => { selectedTraceId = trace.id; active.clear(); state.selected = null; update(); });
+    return tab;
+  }));
+  const endpointBar = document.getElementById("endpoint-bar");
+  endpointBar.replaceChildren();
+  const endpoints = data.nodes.filter(node => node.kind === "endpoint");
+  const endpointNodes = endpoints.length ? endpoints : [{ id: data.id, name: data.endpoint?.name || data.name || "trace" }];
+  endpointNodes.forEach((endpoint, index) => {
+    const tab = document.createElement("button");
+    tab.className = `endpoint-tab${index === 0 ? " active" : ""}`;
+    tab.textContent = endpoint.name;
+    tab.addEventListener("click", () => {
+      endpointBar.querySelectorAll("button").forEach(button => button.classList.remove("active"));
+      tab.classList.add("active");
+      if (endpoint.id !== data.id && nodeByIdNow(endpoint.id)) {
+        state.selected = endpoint.id;
+        highlight(nodeByIdNow(endpoint.id));
+        renderDetails(nodeByIdNow(endpoint.id));
+      }
+    });
+    endpointBar.append(tab);
+  });
 }
 
 // Live mode: SSE push (graph on topology change, exec batches in real time).
@@ -588,7 +652,7 @@ function updateStartMarker(data, nodes) {
   const startEnter = startJoin.enter().append("g").attr("class", "trace-start");
   startEnter.append("path");
   startEnter.append("text").text("START");
-  startSel = startJoin.merge(startEnter);
+  startSel = startJoin.merge(startEnter).attr("class", node => `trace-start${node.kind === "fastapi" ? " fastapi" : ""}`);
   startSel.select("path").attr("d", node => {
     const x = -nodeW(node) / 2;
     const y = -NH / 2;
@@ -619,6 +683,7 @@ function renderTagFilters(nodes) {
 
 function update() {
   const data = loadData();
+  renderTraceTabs(data);
   // header + summary
   d3.select("#h-name").text(data.name || "trace");
   d3.select("#s-nodes").text(data.nodes.length);
@@ -716,6 +781,7 @@ function update() {
   linkSel = linkJoin.enter().append("path")
     .attr("class", "link")
     .merge(linkJoin)
+    .attr("class", d => `link${d.kind === "control" ? " control" : ""}`)
     .attr("marker-end", d => `url(#arrow-${payloadCategory(d.payload)})`)
     .style("stroke", edgeStroke)
     .attr("stroke-width", 1.5)

@@ -75,18 +75,23 @@ tooling without an explicit decision.
 - In-memory trace is the default (backing tests and `render()`).
 - `pylier.trace(..., sidecar=...)` writes **already-edge-resolved** events to a
   JSONL sidecar for offline replay / cross-process consumers.
-- An **OTel receiver** that consumes logfire spans/logs is the planned
-  transport for live, cross-process tracing. It is **not built yet** — stub/plan
-  only. Don't pretend it exists.
-- **Why:** "mimic logfire" means offline file tracing first (simple, works across
-  processes/subprocesses, no server), with the live OTel path as the real-time
-  option. Resolved edges are emitted so sinks never fingerprint values.
+- `pylier.instrument_fastapi(app)` is an optional, in-process ASGI adapter for
+  an **already OTel-instrumented** FastAPI app. It reads the active server span,
+  makes a request trace active, and renders the HTTP request as an external
+  `START` root. It neither creates nor exports OTel spans, and it adds no OTel
+  dependency to the base package.
+- An OTel receiver that consumes exported/logfire spans remains a future
+  cross-process transport; it is **not built yet**. Resolved edges are emitted
+  so sinks never fingerprint values.
 
 ### One render core, static + live
 - `render/template.html` is the single source of truth for the graph look. Both
   static (`pylier.render()`) and live (`pylier.serve()`) use it. Static embeds
   the JSON (incl. the `events` timeline) and replays the execution animation
   once on load; live subscribes to SSE (`/events`) and re-renders in place.
+  The live viewer retains every produced trace in a left root-trace history;
+  an OTel/FastAPI request additionally shows its endpoint tab and `START`
+  callout.
 - **Why:** one look everywhere; no drift between test artifacts and live
   preview. The template also falls back to embedded JSON for `file://` opens.
 - The client keeps a **persistent force simulation + D3 join** — never tear
@@ -117,18 +122,21 @@ tooling without an explicit decision.
 
 ```
 src/pylier/
-  model.py        # Node, Edge, Event, Trace, Level — single source of truth
+  model.py        # Node, Edge, Event, Trace, TraceHistory, Level — neutral core
   fingerprint.py  # content fingerprint (type+hash) — only place values are hashed
   recorder.py     # active-trace contextvar, level gating, edge inference, @node core
   config.py       # pydantic-settings (PYLIER_*, .env): level, sidecar path, port
   tracing/
     sidecar.py    # JSONL event sink (offline replay); edges already resolved
+  integrations/
+    fastapi.py    # optional active-OTel-span ASGI request adapter
   render/
     template.html # THE renderer (D3 v7). Placeholders consumed by html.py
     html.py       # injects graph JSON into template; build_html / render_to_file
   server.py       # stdlib threaded viewer: GET / (html) + GET /graph (json)
 tests/test_core.py
 examples/ingest.py
+examples/fastapi_time.py  # runnable OTel-compatible FastAPI request example
 ```
 
 ### Load-bearing invariants (don't break these)
@@ -145,14 +153,15 @@ examples/ingest.py
 - **`render/template.html` placeholders** replaced by `render/html.py`:
   `__PYLIER_GRAPH__` (JS object), `__PYLIER_GRAPH_JSON__` (embedded fallback),
   `{{NAME}}` (header). When editing the template, keep these exact tokens.
-- **`_last_trace` reference:** `pylier.render()` / `serve()` with no explicit
-  trace render the most recently entered `with pylier.trace(...)` block, not
-  the empty default. This is why post-block `render()` "just works."
+- **`_last_trace` reference:** `pylier.render()` with no explicit trace renders
+  the most recently entered `with pylier.trace(...)` block, not the empty
+  default. `pylier.serve()` with no explicit trace renders the retained history
+  (newest trace selected); pass `trace=` to limit the live viewer to one run.
 
 ## Dev environment
 
 - This is a **uv** project. Never use raw `pip`/`python` in a uv project.
-  - Install/sync deps: `uv sync`
+  - Install/sync deps: `uv sync` (`uv sync --group examples` for runnable web examples)
   - Run anything: `uv run <cmd>` (e.g. `uv run pytest`), never bare `python`
   - Add a dep: `uv add <pkg>` (runtime) or under `[dependency-groups].dev`
 - Python target is **3.14** (`requires-python = ">=3.14"`). PEP 695 type
@@ -196,17 +205,18 @@ examples/ingest.py
 
 - **Fingerprinting misses transformed/aggregated copies** (see edge-inference
   decision above). Document, don't silently patch.
-- The live viewer pushes the **in-memory** trace; the sidecar sink
-  writes events but the viewer doesn't yet reconstruct from a sidecar across
+- The live viewer pushes retained **in-memory** traces; the sidecar sink writes
+  events but the viewer doesn't yet reconstruct from a sidecar across
   processes. (Fast-follow: viewer tails sidecar.)
-- OTel/logfire receiver: planned, **not implemented**.
+- OTel/logfire receiver consuming exported spans: planned, **not implemented**.
+  The shipped FastAPI adapter observes only the active in-process server span.
 - Decorated-but-never-called nodes are not rendered (only called nodes appear).
 - Edge `value` capture is opt-in (`PYLIER_CAPTURE_VALUES`) and binary payloads
   are always truncated to a summary — never embedded raw.
 
 ## Fast-follows (out of v0.1 scope — do only on request)
 
-- `tracing/otel.py`: OTel receiver consuming logfire spans/logs → graph.
+- `tracing/otel.py`: OTel receiver consuming exported/logfire spans → graph.
 - Viewer server tailing the sidecar (cross-process live preview).
 - Fingerprint + contextvar hybrid edge inference for transformed copies.
 - Rendered nodes for declared-but-uncalled `@node`s (registry exists in

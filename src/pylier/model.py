@@ -10,6 +10,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import IntEnum
+from uuid import uuid4
 
 
 class Level(IntEnum):
@@ -45,6 +46,8 @@ class Node:
     is_async: bool = False
     last_ms: float | None = None
     avg_ms: float | None = None
+    kind: str = "pylier"
+    is_start: bool = False
 
 
 @dataclass
@@ -63,6 +66,9 @@ class Edge:
     # full serialized payload — only populated when capture_values is on;
     # binary payloads are truncated to a summary (see fingerprint.serialize_value)
     value: str | None = None
+    # ``control`` links external request roots to captured algorithms. Data
+    # handoffs remain the default and are still inferred by fingerprinting.
+    kind: str = "data"
 
 
 @dataclass
@@ -92,7 +98,11 @@ class Trace:
     """
 
     def __init__(self, name: str = "trace") -> None:
+        self.id = uuid4().hex
         self.name = name
+        self.root: dict[str, str | int | None] | None = None
+        self.endpoint: dict[str, str | int | None] = {"name": name, "status_code": None}
+        self.root_node_id: str | None = None
         self.nodes: OrderedDict[str, Node] = OrderedDict()
         self.edges: OrderedDict[tuple[str, str], Edge] = OrderedDict()
         self.events: list[Event] = []
@@ -114,16 +124,28 @@ class Trace:
         self.graph_version: int = 0
         self.exec_version: int = 0
         self._cond = threading.Condition()
+        self._listeners: list = []
+
+    def add_listener(self, listener) -> None:
+        """Register a callback notified whenever graph or execution data changes."""
+        with self._cond:
+            self._listeners.append(listener)
+
+    def _notify_listeners(self) -> None:
+        for listener in tuple(self._listeners):
+            listener(self)
 
     def _bump_graph(self) -> None:
         """Notify topology change (new node/edge). Caller holds ``_cond``."""
         self.graph_version += 1
         self._cond.notify_all()
+        self._notify_listeners()
 
     def _bump_exec(self) -> None:
         """Notify execution event appended. Caller holds ``_cond``."""
         self.exec_version += 1
         self._cond.notify_all()
+        self._notify_listeners()
 
     def record_event(self, event: Event) -> None:
         """Append an enter/exit event to the timeline and notify waiters."""
@@ -164,6 +186,66 @@ class Trace:
             # locally from exec events, so no graph push here
             return existing
 
+    def set_request_root(
+        self,
+        *,
+        method: str,
+        route: str,
+        otel_trace_id: str,
+        otel_span_id: str,
+    ) -> str:
+        """Create the external FastAPI/OTel request root for this trace."""
+        node_id = f"otel.fastapi.{otel_span_id}"
+        with self._cond:
+            self.name = f"{method} {route}"
+            self.endpoint = {"name": self.name, "status_code": None}
+            self.root = {
+                "otel_trace_id": otel_trace_id,
+                "otel_span_id": otel_span_id,
+                "method": method,
+                "route": route,
+            }
+            self.root_node_id = node_id
+            self.nodes[node_id] = Node(
+                id=node_id,
+                name=self.name,
+                module="fastapi",
+                level=Level.CORE,
+                calls=1,
+                kind="fastapi",
+                is_start=True,
+            )
+            self._bump_graph()
+        return node_id
+
+    def set_request_status(self, status_code: int | None, ms: float) -> None:
+        """Store the completed HTTP response status and request duration."""
+        with self._cond:
+            self.endpoint["status_code"] = status_code
+            if self.root_node_id is not None and self.root_node_id in self.nodes:
+                self.nodes[self.root_node_id].last_ms = ms
+                self.nodes[self.root_node_id].avg_ms = ms
+            self._bump_exec()
+
+    def link_request_root(self, target: str) -> None:
+        """Link an external request root to the first captured pylier node."""
+        if self.root_node_id is None or target == self.root_node_id:
+            return
+        with self._cond:
+            key = (self.root_node_id, target)
+            if key in self.edges:
+                return
+            endpoint_node = self.nodes.get(target)
+            if endpoint_node is not None:
+                endpoint_node.kind = "endpoint"
+            self.edges[key] = Edge(
+                source=self.root_node_id,
+                target=target,
+                payload_type="request",
+                kind="control",
+            )
+            self._bump_graph()
+
     def record_latency(self, node_id: str, ms: float) -> None:
         """Update a node's latest call duration and running average.
 
@@ -192,6 +274,7 @@ class Trace:
         preview: str | None,
         payload_types: tuple[str, ...] = (),
         value: str | None = None,
+        kind: str = "data",
     ) -> Edge:
         with self._cond:
             key = (source, target)
@@ -205,6 +288,7 @@ class Trace:
                     preview=preview,
                     payload_types=payload_types,
                     value=value,
+                    kind=kind,
                 )
                 self.edges[key] = edge
                 self._bump_graph()
@@ -251,7 +335,10 @@ class Trace:
             categories = sorted({n.module for n in self.nodes.values()})
             data_types = sorted({e.payload_type for e in self.edges.values()})
             return {
+                "id": self.id,
                 "name": self.name,
+                "root": self.root,
+                "endpoint": self.endpoint,
                 "nodes": [
                     {
                         "id": n.id,
@@ -263,6 +350,8 @@ class Trace:
                         "is_async": n.is_async,
                         "last_ms": n.last_ms,
                         "avg_ms": n.avg_ms,
+                        "kind": n.kind,
+                        "is_start": n.is_start,
                     }
                     for n in self.nodes.values()
                 ],
@@ -276,6 +365,7 @@ class Trace:
                         "payload_types": list(e.payload_types),
                         "count": e.count,
                         "value": e.value,
+                        "kind": e.kind,
                     }
                     for e in self.edges.values()
                 ],
@@ -298,4 +388,47 @@ class Trace:
             }
 
 
-__all__ = ["Level", "Node", "Edge", "Event", "Trace"]
+class TraceHistory:
+    """Thread-safe retained request/run history consumed by the live viewer."""
+
+    def __init__(self, limit: int = 100) -> None:
+        self.limit = limit
+        self.traces: OrderedDict[str, Trace] = OrderedDict()
+        self.version = 0
+        self._cond = threading.Condition()
+
+    def _on_trace_change(self, _trace: Trace) -> None:
+        with self._cond:
+            self.version += 1
+            self._cond.notify_all()
+
+    def add(self, trace: Trace) -> Trace:
+        """Retain ``trace`` and subscribe to its live changes."""
+        with self._cond:
+            if trace.id in self.traces:
+                return trace
+            self.traces[trace.id] = trace
+            while len(self.traces) > self.limit:
+                self.traces.popitem(last=False)
+            self.version += 1
+            self._cond.notify_all()
+        # Subscribe outside the history lock: trace changes notify this history
+        # while holding the trace lock, so reversing those lock orders deadlocks.
+        trace.add_listener(self._on_trace_change)
+        return trace
+
+    def to_view_dict(self) -> dict:
+        """Serialize all retained traces in newest-first viewer order."""
+        with self._cond:
+            traces = list(self.traces.values())
+        return {"traces": [trace.to_graph_dict() for trace in reversed(traces)]}
+
+    def wait_for_change(self, version: int, timeout: float) -> int:
+        """Wait until retained history or one of its traces changes."""
+        with self._cond:
+            if self.version <= version:
+                self._cond.wait(timeout=timeout)
+            return self.version
+
+
+__all__ = ["Level", "Node", "Edge", "Event", "Trace", "TraceHistory"]
