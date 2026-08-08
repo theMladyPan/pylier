@@ -8,6 +8,7 @@ Run::
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 
@@ -37,27 +38,26 @@ def ocr_images(doc: dict) -> list[str]:
 
 
 @pylier.node(_tags=["embedding"])
-def embed(chunks: list[str]) -> list[dict]:
-    time.sleep(_STEP_DELAY)
-    return [{"vec": [len(c), 0], "text": c} for c in chunks]
+async def embed(chunks: list[str]) -> list[dict]:
+    await asyncio.sleep(_STEP_DELAY)
+    return [{"vec": [len(chunk), 0], "text": chunk} for chunk in chunks]
 
 
 @pylier.node(_tags=["indexing"])
-def index(document_text: list[str], image_text: list[str]) -> int:
-    """Embed extracted document and image text, then index every vector."""
-    time.sleep(_STEP_DELAY)
-    document_vectors = embed(document_text)
-    image_vectors = embed(image_text)
+async def index(document_text: list[str], image_text: list[str]) -> int:
+    """Embed extracted document and image text concurrently, then index every vector."""
+    await asyncio.sleep(_STEP_DELAY)
+    document_vectors, image_vectors = await asyncio.gather(embed(document_text), embed(image_text))
     return len(document_vectors) + len(image_vectors)
 
 
-def run_pipeline(name: str) -> int:
+async def run_pipeline(name: str) -> int:
     """Execute one full ingest run, returning the number of indexed vectors."""
     with pylier.trace(name):
         doc = load_document("report.pdf")
         text_chunks = extract_text(doc)
         image_chunks = ocr_images(doc)
-        total = index(text_chunks, image_chunks)
+        total = await index(text_chunks, image_chunks)
     return total
 
 
@@ -79,7 +79,7 @@ def main(mode: str) -> None:
                     doc = load_document("report.pdf")
                     text_chunks = extract_text(doc)
                     image_chunks = ocr_images(doc)
-                    total = index(text_chunks, image_chunks)
+                    total = asyncio.run(index(text_chunks, image_chunks))
                     print(f"doc {i}: indexed {total} vectors")
                     time.sleep(2.0)
                 input("press enter to stop...")
@@ -90,7 +90,7 @@ def main(mode: str) -> None:
     elif mode == "html":
         # One-shot: no delays, single run, write a self-contained HTML file.
         _STEP_DELAY = 0.0
-        total = run_pipeline("doc-ingest")
+        total = asyncio.run(run_pipeline("doc-ingest"))
         print(f"indexed {total} vectors")
         out = pylier.render("pylier-ingest.html")
         print(f"wrote {out}")

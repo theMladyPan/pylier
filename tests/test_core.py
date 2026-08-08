@@ -422,8 +422,9 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "trace-start" in html
     assert "traceStartNode" in html
     assert "nodes.find(node => node.is_root)" in html
-    assert "1. Traces" in html
-    assert "2. Filters" in html
+    assert "Selectors" in html
+    assert "Traces" in html
+    assert "Filters" in html
     assert 'name="edge-mode"' in html
     assert "directRoute" in html
     assert 'state.edgeMode === "direct" ? directRoute(d) : linkRoute(d)' in html

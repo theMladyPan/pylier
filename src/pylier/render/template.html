@@ -111,9 +111,9 @@
   #main.left-collapsed #traces { overflow: hidden; }
   #main.left-collapsed #traces .pane-head { height: 100%; padding: 8px 0; justify-content: center; align-items: flex-start; }
   #main.left-collapsed #traces .pane-head h2,
-  #main.left-collapsed #traces #b-traces,
-  #main.left-collapsed #traces .collapse-label { display: none; }
-  #main.left-collapsed #traces #b-left { color: var(--text); font-size: 16px; padding: 5px 8px; border: 0; background: transparent; }
+  #main.left-collapsed #traces #selector-traces,
+  #main.left-collapsed #traces #filters { display: none; }
+  #main.left-collapsed #traces #b-left { color: var(--text); font-size: 16px; padding: 5px 8px; }
   #main.left-collapsed #traces #b-left:hover { color: var(--accent); }
   #filters { border-top: 1px solid var(--panel-border); }
   #main.left-collapsed #traces > :not(.pane-head) { display: none; }
@@ -129,15 +129,11 @@
     display: flex; align-items: center; justify-content: space-between;
   }
   .pane-head h2 { font-size: 10px; margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: .13em; }
-  .pane-actions { display: flex; align-items: center; gap: 2px; }
   .pane-toggle {
     border: 0; background: transparent; color: var(--muted); padding: 5px; cursor: pointer;
     font: 14px var(--mono);
   }
   .pane-toggle:hover { color: var(--accent); }
-  .pane-collapse { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--panel-border); border-radius: 4px; background: var(--panel-2); color: var(--text); padding: 3px 6px; cursor: pointer; font: 10px var(--mono); }
-  .pane-collapse:hover { border-color: var(--accent); color: var(--accent); }
-  .pane-collapse .collapse-icon { color: var(--accent); font-size: 14px; line-height: 10px; }
   .section-collapsed .pane-content, .section-collapsed #trace-list { display: none; }
   #sidebar.sidebar-collapsed { overflow: hidden; }
   #sidebar.sidebar-collapsed .pane-content { display: none; }
@@ -298,11 +294,14 @@
   <button class="theme-btn" id="b-theme">☀ light</button>
 </div>
 <div id="main">
-  <aside id="traces" aria-label="Recorded traces and filters">
-    <div class="pane-head"><h2>1. Traces</h2><div class="pane-actions"><button class="pane-collapse" id="b-left" title="Hide traces and filters" aria-label="Hide traces and filters"><span class="collapse-icon">‹</span><span class="collapse-label">Hide</span></button><button class="pane-toggle" id="b-traces" title="Collapse traces">⌃</button></div></div>
-    <div id="trace-list"></div>
+  <aside id="traces" aria-label="Selectors">
+    <div class="pane-head"><h2>Selectors</h2><button class="pane-toggle" id="b-left" title="Collapse selectors" aria-label="Collapse selectors">‹</button></div>
+    <section id="selector-traces" aria-label="Traces">
+      <div class="pane-head"><h2>Traces</h2><button class="pane-toggle" id="b-traces" title="Collapse traces">⌃</button></div>
+      <div id="trace-list"></div>
+    </section>
     <section id="filters" aria-label="Filters">
-    <div class="pane-head"><h2>2. Filters</h2><button class="pane-toggle" id="b-filters" title="Collapse filters">⌃</button></div>
+    <div class="pane-head"><h2>Filters</h2><button class="pane-toggle" id="b-filters" title="Collapse filters">⌃</button></div>
     <div class="pane-content">
       <section id="tag-filter">
         <h2>Tags</h2>
@@ -1368,8 +1367,8 @@ function setSectionCollapsed(element, button, collapsed, persistKey, persist = t
 function setLeftCollapsed(collapsed, persist = true) {
   main.classList.toggle("left-collapsed", collapsed);
   const button = document.getElementById("b-left");
-  button.querySelector(".collapse-icon").textContent = collapsed ? "›" : "‹";
-  button.title = collapsed ? "Show traces and filters" : "Hide traces and filters";
+  button.textContent = collapsed ? "›" : "‹";
+  button.title = collapsed ? "Show selectors" : "Collapse selectors";
   button.setAttribute("aria-label", button.title);
   if (persist) try { localStorage.setItem("pylier-left-collapsed", String(collapsed)); } catch { /* private mode */ }
   setTimeout(resizeGraph, 0);
@@ -1408,7 +1407,7 @@ function setConsoleCollapsed(collapsed, persist = true) {
   setTimeout(resizeGraph, 0);
 }
 d3.select("#b-left").on("click", () => setLeftCollapsed(!main.classList.contains("left-collapsed")));
-d3.select("#b-traces").on("click", () => setSectionCollapsed(document.getElementById("traces"), document.getElementById("b-traces"), !document.getElementById("traces").classList.contains("section-collapsed"), "pylier-traces-collapsed"));
+d3.select("#b-traces").on("click", () => setSectionCollapsed(document.getElementById("selector-traces"), document.getElementById("b-traces"), !document.getElementById("selector-traces").classList.contains("section-collapsed"), "pylier-traces-collapsed"));
 d3.select("#b-filters").on("click", () => setSectionCollapsed(filters, document.getElementById("b-filters"), !filters.classList.contains("section-collapsed"), "pylier-filters-collapsed"));
 d3.select("#b-sidebar").on("click", () => setSidebarCollapsed(!sidebar.classList.contains("sidebar-collapsed")));
 d3.select("#b-console").on("click", () => setConsoleCollapsed(!eventConsole.hidden));
@@ -1478,7 +1477,7 @@ const savedConsoleHeight = (() => {
 if (Number.isFinite(savedSidebarWidth)) setSidebarWidth(savedSidebarWidth, false);
 setEdgeMode(savedEdgeMode, false);
 setLeftCollapsed(savedLeftCollapsed, false);
-setSectionCollapsed(document.getElementById("traces"), document.getElementById("b-traces"), savedTracesCollapsed, "pylier-traces-collapsed", false);
+setSectionCollapsed(document.getElementById("selector-traces"), document.getElementById("b-traces"), savedTracesCollapsed, "pylier-traces-collapsed", false);
 setSectionCollapsed(filters, document.getElementById("b-filters"), savedFiltersCollapsed, "pylier-filters-collapsed", false);
 setSidebarCollapsed(savedSidebarCollapsed, false);
 setConsoleCollapsed(savedConsoleCollapsed, false);
