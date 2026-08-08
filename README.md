@@ -18,12 +18,12 @@
 <table>
 <tr>
 <td width="50%" align="center">
-  <a href="assets/app-flow-view.png">
+  <a href="https://theMladyPan.github.io/pylier/fulfillment.html">
     <img src="assets/app-flow-view.png" alt="pylier Application Flow view showing nested fulfillment branches" width="100%">
   </a>
 </td>
 <td width="50%" align="center">
-  <a href="assets/data-flow-view.png">
+  <a href="https://theMladyPan.github.io/pylier/fulfillment.html">
     <img src="assets/data-flow-view.png" alt="pylier Data Flow view showing value provenance across fulfillment branches" width="100%">
   </a>
 </td>
@@ -64,7 +64,7 @@ Open a self-contained replay in GitHub Pages—no local install or server needed
 
 ## Quick start: document ingestion
 
-The [ingestion example](examples/ingest.py) is the fastest way to see pylier's
+The [ingestion example](https://theMladyPan.github.io/pylier/ingest.html) is the fastest way to see pylier's
 value: a document branches into text and image paths, then concurrently embeds
 both branches before they converge at an indexing stage.
 
