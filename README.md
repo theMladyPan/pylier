@@ -15,9 +15,24 @@
   <img src="https://img.shields.io/badge/graph%20wiring-none-2ea44f" alt="No manual graph wiring">
 </p>
 
-<a href="examples/ingest.py">
-  <img src="assets/ingest-graph.png" alt="Interactive pylier graph of a branched document-ingestion pipeline" width="100%">
-</a>
+<table>
+<tr>
+<td width="50%" align="center">
+  <a href="examples/showcase.py">
+    <img src="assets/app-flow-view.png" alt="pylier Application Flow view showing nested fulfillment branches" width="100%">
+  </a>
+</td>
+<td width="50%" align="center">
+  <a href="examples/showcase.py">
+    <img src="assets/data-flow-view.png" alt="pylier Data Flow view showing value provenance across fulfillment branches" width="100%">
+  </a>
+</td>
+</tr>
+<tr>
+<td align="center"><b>Application Flow</b><br>Caller, callee, and return handoffs.</td>
+<td align="center"><b>Data Flow</b><br>Producer-to-consumer value provenance.</td>
+</tr>
+</table>
 
 </div>
 
@@ -88,7 +103,7 @@ pylier.render("document-ingest.html")  # interactive, standalone HTML
 
 ## Two views of one run
 
-The viewer switches between two complementary graph perspectives:
+The viewer switches between the two complementary perspectives pictured above:
 
 - **Application Flow** — direct argument, return, and exception handoffs between
   callers and callees. Top-level calls connect to the trace root.
