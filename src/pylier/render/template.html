@@ -501,9 +501,11 @@ function renderTraceTabs(data) {
   });
 }
 
-// Live mode: SSE push (graph on topology change, exec batches in real time).
-// Static files fall back to the embedded data + a one-shot timeline replay.
-const LIVE = location.protocol.startsWith("http") && !location.href.startsWith("file:");
+// Live mode is set by the local viewer server. Static bundles may be hosted
+// over HTTP (for example GitHub Pages), but must never request localhost-only
+// SSE or payload endpoints.
+const LIVE = __PYLIER_LIVE__;
+const EMBEDDED_PAYLOADS = __PYLIER_INVOCATION_PAYLOADS__;
 const SSE_LOG_LIMIT = 100;
 const sseLog = [];
 const pendingSseLog = [];
@@ -1184,12 +1186,18 @@ function renderPayload(pre, payloadText) {
 }
 async function expandInvocation(body, invocationId, payloadField) {
   const detail = body.append("pre").attr("class", "value").text("Loading captured payload…");
+  let payload = invocationPayloadCache.get(invocationId) || EMBEDDED_PAYLOADS[invocationId];
+  if (payload) {
+    invocationPayloadCache.set(invocationId, payload);
+    detail.text("");
+    renderPayload(detail.node(), payload[payloadField] || "null");
+    return;
+  }
   if (!LIVE) {
-    detail.text("Full payload is available only in the live viewer.");
+    detail.text("Full payload was not embedded in this static artifact.");
     return;
   }
   try {
-    let payload = invocationPayloadCache.get(invocationId);
     if (!payload) {
       const response = await fetch(`/invocations/${encodeURIComponent(selectedTraceId)}/${encodeURIComponent(invocationId)}/payload`);
       if (!response.ok) {

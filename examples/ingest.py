@@ -9,11 +9,14 @@ Run::
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import random
 import sys
 import time
 
 import pylier
+from pylier.config import reload_settings
 
 # Each invocation gets its own wait so concurrent embedding branches visibly
 # complete independently in the live viewer.
@@ -96,12 +99,29 @@ def main(mode: str) -> None:
     elif mode == "html":
         # One-shot: no delays, single run, write a self-contained HTML file.
         _WAIT_RANGE = (0.01, 0.05)
-        total = asyncio.run(run_pipeline("doc-ingest"))
-        print(f"indexed {total} vectors")
-        out = pylier.render("pylier-ingest.html")
-        print(f"wrote {out}")
+        with _capture_synthetic_values():
+            total = asyncio.run(run_pipeline("doc-ingest"))
+            print(f"indexed {total} vectors")
+            out = pylier.render("pylier-ingest.html", embed_payloads=True)
+            print(f"wrote private debug bundle {out}")
     else:
         print(f"unknown mode {mode!r}; use 'serve' or 'html'")
+
+
+@contextlib.contextmanager
+def _capture_synthetic_values():
+    """Enable full capture while rendering the demo's intentionally synthetic values."""
+    prior_value = os.environ.get("PYLIER_CAPTURE_VALUES")
+    os.environ["PYLIER_CAPTURE_VALUES"] = "true"
+    reload_settings()
+    try:
+        yield
+    finally:
+        if prior_value is None:
+            os.environ.pop("PYLIER_CAPTURE_VALUES", None)
+        else:
+            os.environ["PYLIER_CAPTURE_VALUES"] = prior_value
+        reload_settings()
 
 
 if __name__ == "__main__":

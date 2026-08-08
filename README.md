@@ -138,8 +138,12 @@ branch lineage visible in the next decorated stage. See
   levels to control both captured nodes and metadata detail.
 - **Useful inspection** — filter by node tags; click graph nodes and edges for
   payload type, size, preview, and optional captured values. Full values require
-  `PYLIER_CAPTURE_VALUES=1`, remain local to the live viewer, and are bounded
-  FIFO by count and bytes; static HTML stays metadata-only.
+  `PYLIER_CAPTURE_VALUES=1` and remain bounded FIFO by count and bytes. To make
+  an intentionally shareable debug bundle, use
+  `pylier.render("debug.html", embed_payloads=True)`; the bundled data is
+  readable by anyone with the HTML file, so the default static render remains
+  metadata-only. The published examples use this opt-in only because their data
+  is synthetic.
 - **Share or stream** — `pylier.render()` creates a portable HTML file;
   `pylier.serve()` streams updates to a local viewer with SSE.
 - **Keep an audit trail** — `pylier.trace(..., sidecar="trace.jsonl")` writes

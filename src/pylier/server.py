@@ -96,7 +96,9 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
                 )
                 self._send(
                     build_html(
-                        initial_trace, history=captured_trace if isinstance(captured_trace, TraceHistory) else None
+                        initial_trace,
+                        history=captured_trace if isinstance(captured_trace, TraceHistory) else None,
+                        live=True,
                     ).encode("utf-8"),
                     "text/html; charset=utf-8",
                 )

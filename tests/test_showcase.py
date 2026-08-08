@@ -104,7 +104,9 @@ def test_showcase_writes_static_artifacts_and_resolved_sidecar(tmp_path):
     assert artifacts.full_html.exists()
     assert artifacts.info_html.exists()
     assert artifacts.sidecar.exists()
-    assert "fulfillment-showcase" in artifacts.full_html.read_text(encoding="utf-8")
+    full_html = artifacts.full_html.read_text(encoding="utf-8")
+    assert "fulfillment-showcase" in full_html
+    assert "const EMBEDDED_PAYLOADS = {" in full_html
     sidecar_events = [json.loads(line) for line in artifacts.sidecar.read_text(encoding="utf-8").splitlines()]
     assert any(event["tags"] == ["inventory", "async"] for event in sidecar_events)
     assert all("payload" in edge for event in sidecar_events for edge in event["edges"])

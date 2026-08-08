@@ -675,6 +675,52 @@ def test_events_timeline_and_edge_handoffs():
     assert graph["events"][2]["edges"] == consume_enter.edges
 
 
+def test_static_render_embeds_payloads_only_when_explicitly_requested(monkeypatch, tmp_path: Path):
+    """Private bundles carry retained payloads without enabling them by default."""
+    from pylier.config import reload_settings
+
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    reload_settings()
+
+    @pylier.node
+    def echo(value: str) -> str:
+        return value
+
+    try:
+        with pylier.trace("private-bundle") as trace:
+            echo("synthetic payload")
+
+        default_html = pylier.render(tmp_path / "default.html", trace=trace).read_text(encoding="utf-8")
+        bundle_html = pylier.render(tmp_path / "bundle.html", trace=trace, embed_payloads=True).read_text(
+            encoding="utf-8"
+        )
+
+        assert "const LIVE = false;" in default_html
+        assert "const EMBEDDED_PAYLOADS = {};" in default_html
+        assert '"synthetic payload"' not in default_html
+        assert "const EMBEDDED_PAYLOADS = {" in bundle_html
+        assert "synthetic payload" in bundle_html
+    finally:
+        monkeypatch.delenv("PYLIER_CAPTURE_VALUES")
+        reload_settings()
+
+
+def test_live_server_marks_rendered_html_live():
+    """The in-process viewer keeps the local lazy payload endpoint available."""
+    server = pylier.serve(trace=Trace("live-payloads"), port=0, open_browser=False)
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=1)
+    try:
+        connection.request("GET", "/")
+        response = connection.getresponse()
+
+        assert response.status == 200
+        assert "const LIVE = true;" in response.read().decode()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+
+
 def test_sse_latency_update_does_not_emit_empty_exec_batches():
     trace = Trace("sse-latency")
     trace.get_or_create_node(Node(id="latency", name="latency", module="tests", level=Level.INFO))

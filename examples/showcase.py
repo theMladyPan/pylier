@@ -326,8 +326,8 @@ def write_html_artifacts(output_dir: Path = Path(".")) -> ShowcaseArtifacts:
 
     full_trace = asyncio.run(run_fulfillment("fulfillment-showcase", sidecar=sidecar))
     info_trace = asyncio.run(run_fulfillment("fulfillment-info", level=Level.INFO))
-    pylier.render(full_html, trace=full_trace)
-    pylier.render(info_html, trace=info_trace)
+    pylier.render(full_html, trace=full_trace, embed_payloads=True)
+    pylier.render(info_html, trace=info_trace, embed_payloads=True)
     return ShowcaseArtifacts(full_html=full_html, info_html=info_html, sidecar=sidecar)
 
 

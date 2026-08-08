@@ -234,7 +234,7 @@ class Trace:
                     evicted.payload_state = "evicted"
 
     def invocation_payload(self, invocation_id: str) -> tuple[str, dict[str, str] | None]:
-        """Return ``(state, payload)`` for the live lazy-inspector endpoint."""
+        """Return ``(state, payload)`` for a live inspector or static debug bundle."""
         with self._cond:
             invocation = self.invocations.get(invocation_id)
             if invocation is None:

@@ -125,12 +125,19 @@ def trace(name: str = "trace", *, sidecar: bool | str | Path = False):
         reset_trace(token)
 
 
-def render(path: str | Path = "pylier.html", trace: Trace | None = None) -> Path:
+def render(
+    path: str | Path = "pylier.html",
+    trace: Trace | None = None,
+    *,
+    embed_payloads: bool = False,
+) -> Path:
     """Render a trace to a self-contained HTML file.
 
     Args:
         path: Output HTML path.
         trace: Trace to render; defaults to the current/default trace.
+        embed_payloads: If True, embed retained full invocation inputs and
+            outputs in the HTML. Use only for intentionally shareable data.
 
     Returns:
         The written file path.
@@ -139,8 +146,8 @@ def render(path: str | Path = "pylier.html", trace: Trace | None = None) -> Path
         trace = resolve_trace()
         from pylier.recorder import trace_history
 
-        return render_to_file(trace, path, history=trace_history())
-    return render_to_file(trace, path)
+        return render_to_file(trace, path, history=trace_history(), embed_payloads=embed_payloads)
+    return render_to_file(trace, path, embed_payloads=embed_payloads)
 
 
 def set_level(level: Level | str):

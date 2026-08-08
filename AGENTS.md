@@ -86,7 +86,10 @@ tooling without an explicit decision.
   static (`pylier.render()`) and live (`pylier.serve()`) use it. Static embeds
   the JSON (incl. the `events` timeline) and replays the execution animation
   once on load; live subscribes to SSE (`/events`) and re-renders in place.
-  The live viewer retains every produced trace in a left root-trace history.
+  Static HTML remains metadata-only unless the explicit
+  `pylier.render(..., embed_payloads=True)` debug-bundle opt-in embeds the
+  retained invocation payloads. The live viewer retains every produced trace
+  in a left root-trace history.
 - **Why:** one look everywhere; no drift between test artifacts and live
   preview. The template also falls back to embedded JSON for `file://` opens.
 - The client keeps a **persistent force simulation + D3 join** — never tear
@@ -149,7 +152,9 @@ examples/pseudo.py  # canonical nested-handoff example
   from exec events).
 - **`render/template.html` placeholders** replaced by `render/html.py`:
   `__PYLIER_GRAPH__` (JS object), `__PYLIER_GRAPH_JSON__` (embedded fallback),
-  `{{NAME}}` (header). When editing the template, keep these exact tokens.
+  `__PYLIER_LIVE__` (server-mode flag), `__PYLIER_INVOCATION_PAYLOADS__`
+  (explicit static debug bundle), `{{NAME}}` (header). When editing the
+  template, keep these exact tokens.
 - **`_last_trace` reference:** `pylier.render()` with no explicit trace renders
   the most recently entered `with pylier.trace(...)` block, not the empty
   default. `pylier.serve()` with no explicit trace renders the retained history
@@ -209,7 +214,9 @@ examples/pseudo.py  # canonical nested-handoff example
   The shipped viewer observes retained in-process traces only.
 - Decorated-but-never-called nodes are not rendered (only called nodes appear).
 - Full invocation payload capture is opt-in (`PYLIER_CAPTURE_VALUES`). Live
-  inspector expansion fetches it lazily from the local viewer; it is bounded by
+  inspector expansion fetches it lazily from the local viewer; an explicit
+  `pylier.render(..., embed_payloads=True)` bundle can embed the same retained
+  values for intentionally shareable synthetic/debug runs. Both are bounded by
   `PYLIER_PAYLOAD_MAX_INVOCATIONS` (100) and `PYLIER_PAYLOAD_MAX_BYTES` (100
   MiB), evicting oldest payloads first. Binary payloads are always summaries.
 
