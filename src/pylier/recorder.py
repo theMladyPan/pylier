@@ -72,6 +72,7 @@ class NodeMeta:
     module: str
     level: Level
     tags: tuple[str, ...]
+    parameter_names: tuple[str, ...] = ()
     is_async: bool = False
 
 
@@ -254,7 +255,8 @@ def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> con
             )
             fired.append({"source": source_id, "target": meta.id})
     if not fired and caller_id is not None and caller_id != meta.id and (args or kwargs or caller_stack):
-        arguments = {"args": args, "kwargs": kwargs}
+        arguments = dict(zip(meta.parameter_names, args, strict=False))
+        arguments.update(kwargs)
         trace.add_edge(
             caller_id,
             meta.id,
@@ -389,7 +391,13 @@ def make_meta(func: Callable[..., Any], level: Level, tags: tuple[str, ...]) -> 
     name = getattr(func, "__qualname__", getattr(func, "__name__", "anonymous"))
     node_id = f"{module}.{name}"
     return NodeMeta(
-        id=node_id, name=name, module=module, level=level, tags=tags, is_async=inspect.iscoroutinefunction(func)
+        id=node_id,
+        name=name,
+        module=module,
+        level=level,
+        tags=tags,
+        parameter_names=tuple(inspect.signature(func).parameters),
+        is_async=inspect.iscoroutinefunction(func),
     )
 
 

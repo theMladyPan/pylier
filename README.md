@@ -108,52 +108,11 @@ branch lineage visible in the next decorated stage.
 - **Keep an audit trail** — `pylier.trace(..., sidecar="trace.jsonl")` writes
   already-resolved events to JSONL for offline consumers.
 
-## FastAPI + OpenTelemetry
+## Coexistence with other tracers
 
-pylier can attach its algorithm graph to an existing OpenTelemetry-instrumented
-FastAPI request. It does not create or export OTel spans: the application owns
-its OTel setup, while pylier reads the active server span and records decorated
-algorithm calls beneath it.
-
-Install and configure FastAPI's OTel instrumentation in the application, then
-add pylier **before** the OTel middleware so the OTel server span wraps it:
-
-```python
-import pylier
-from fastapi import FastAPI
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-app = FastAPI()
-pylier.instrument_fastapi(app)
-FastAPIInstrumentor.instrument_app(app)
-
-
-@app.post("/documents")
-@pylier.node
-async def upload_document(document: bytes):
-    return index_document(document)
-```
-
-`pylier.serve()` keeps every completed decorated run and OTel-backed HTTP
-request in its left-side root-trace history. Select a request to inspect its
-endpoint tab and graph. The FastAPI root is shown with a `START` callout;
-solid graph edges remain pylier data flow, and the request-to-first-algorithm
-control edge only establishes the external request boundary.
-
-A runnable IANA-timezone and SQLite example is in
-[`examples/fastapi_time.py`](examples/fastapi_time.py). The generic in-process
-OTel bridge imports its SQLite operation spans without a `@pylier.node`
-decorator, preserving their emitted attributes/events in the inspector:
-
-```bash
-uv sync --group examples
-uv run --group examples examples/fastapi_time.py
-curl 'http://127.0.0.1:8000/time?location=Europe/Bratislava'
-curl -X POST 'http://127.0.0.1:8000/locations' \
-  -H 'content-type: application/json' \
-  -d '{"location":"Europe/Bratislava"}'
-# viewer: http://127.0.0.1:8765
-```
+pylier has no OpenTelemetry, Logfire, FastAPI, or cloud dependency. It records
+its own local decorator traces and does not mutate ambient tracing context, so
+another tracer can instrument the same process independently.
 
 ## Development
 

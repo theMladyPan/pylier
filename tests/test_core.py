@@ -14,6 +14,38 @@ import pylier
 from pylier.model import Level, Node, Trace
 
 
+def test_trace_root_captures_nested_argument_and_return_handoffs(monkeypatch):
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    from pylier.config import reload_settings
+
+    reload_settings()
+
+    @pylier.node
+    def f1():
+        return None
+
+    @pylier.node
+    def f2(a: int, b: str) -> str:
+        f1()
+        return f"{a} {b}"
+
+    try:
+        with pylier.trace("main") as trace:
+            f2(42, "hello")
+    finally:
+        monkeypatch.delenv("PYLIER_CAPTURE_VALUES")
+        reload_settings()
+
+    root_id = trace.root_node_id
+    f1_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("f1"))
+    f2_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("f2"))
+    handoffs = {(edge.source, edge.target): edge for edge in trace.edges.values()}
+    assert json.loads(handoffs[root_id, f2_id].value) == {"a": 42, "b": "hello"}
+    assert handoffs[f2_id, f1_id].payload_type == "empty"
+    assert handoffs[f1_id, f2_id].payload_type == "empty"
+    assert json.loads(handoffs[f2_id, root_id].value) == "42 hello"
+
+
 def test_sync_edge_inferred_from_returned_value():
     @pylier.node
     def producer():
@@ -29,9 +61,8 @@ def test_sync_edge_inferred_from_returned_value():
     assert out == "hello"
     ids = list(tr.nodes)
     assert len(ids) == 2
-    assert len(tr.edges) == 1
-    (src, tgt, kind), edge = next(iter(tr.edges.items()))
-    assert kind == "data"
+    assert len(tr.edges) == 3
+    (src, tgt), edge = next(item for item in tr.edges.items() if item[0][1].endswith("consumer"))
     assert src.endswith("producer")
     assert tgt.endswith("consumer")
     assert edge.payload_type == "dict"
@@ -61,8 +92,8 @@ def test_derive_infers_multiple_sources_for_a_computed_value():
     index_node_id = next(node_id for node_id, node in trace.nodes.items() if node.name.endswith("index_document"))
     inbound_source_names = {
         trace.nodes[source_id].name.rsplit(".", 1)[-1]
-        for source_id, target_id, kind in trace.edges
-        if target_id == index_node_id and kind == "data"
+        for source_id, target_id in trace.edges
+        if target_id == index_node_id
     }
     assert inbound_source_names == {"load_title", "load_body"}
 
@@ -111,10 +142,9 @@ def test_derive_warns_and_keeps_known_sources_when_a_source_is_untraced():
             document = pylier.derive(title + " external", from_=[title, " external"])
         index_document(document)
 
-    assert len(trace.edges) == 1
-    edge = next(iter(trace.edges.values()))
+    assert len(trace.edges) == 3
+    edge = next(edge for edge in trace.edges.values() if edge.target.endswith("index_document"))
     assert trace.nodes[edge.source].name.endswith("load_title")
-    assert trace.nodes[edge.target].name.endswith("index_document")
 
 
 def test_derive_rejects_a_single_string_as_the_source_iterable():
@@ -163,7 +193,7 @@ def test_heterogeneous_tuple_records_member_types_for_rendering():
     with pylier.trace() as tr:
         handle(emit())
 
-    edge = next(iter(tr.edges.values()))
+    edge = next(edge for edge in tr.edges.values() if edge.target.endswith("handle"))
     assert edge.payload_type == "tuple"
     assert edge.payload_types == ("bool", "int", "str")
 
@@ -218,8 +248,8 @@ def test_branching_pipeline_inferred():
 
     assert len(tr.nodes) == 4
     # load -> a, load -> b, a -> merge, b -> merge
-    assert len(tr.edges) == 4
-    targets_of_load = {tgt for (src, tgt, kind), e in tr.edges.items() if src.endswith("load") and kind == "data"}
+    assert len(tr.edges) == 8
+    targets_of_load = {tgt for (src, tgt), e in tr.edges.items() if src.endswith("load") and tgt in tr.nodes}
     assert {t.rsplit(".", 1)[-1] for t in targets_of_load} == {"branch_a", "branch_b"}
 
 
@@ -240,7 +270,7 @@ def test_async_node_infers_edge():
 
     result, tr = asyncio.run(run())
     assert result == 6
-    assert len(tr.edges) == 1
+    assert len(tr.edges) == 3
     assert next(iter(tr.edges.values())).payload_type == "list"
 
 
@@ -308,8 +338,8 @@ def test_render_writes_self_contained_html(tmp_path: Path):
         i += 1
     graph = json.loads(html[obj_start : i + 1])
     assert graph["name"] == "render-test"
-    assert len(graph["nodes"]) == 2
-    assert len(graph["links"]) == 1
+    assert len(graph["nodes"]) == 3
+    assert len(graph["links"]) == 3
     assert "TYPE_COLOR" in html
     assert "tag-options" in html
     assert "--edge-glow-alpha" in html
@@ -318,9 +348,9 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert "sim.alpha(prevNodeIds.size ? 0.12 : 0.65).restart()" in html
     assert "trace-start" in html
     assert "traceStartNode" in html
-    assert "nodes.find(node => node.is_start)" in html
-    assert ".link.return" in html
-    assert "JSON.stringify(d.otel, null, 2)" in html
+    assert "nodes.find(node => node.is_root)" in html
+    assert "1. Traces" in html
+    assert "2. Filters" in html
     assert 'name="edge-mode"' in html
     assert "directRoute" in html
     assert 'state.edgeMode === "direct" ? directRoute(d) : linkRoute(d)' in html
@@ -567,111 +597,6 @@ def test_sse_latency_update_does_not_emit_empty_exec_batches():
         connection.close()
         server.shutdown()
         server.server_close()
-
-
-def test_fastapi_request_trace_serializes_root_and_control_handoff():
-    from opentelemetry import context as otel_context
-    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
-
-    from pylier.integrations.fastapi import PylierASGIMiddleware
-    from pylier.model import TraceHistory
-
-    @pylier.node
-    def endpoint_algorithm():
-        return {"ok": True}
-
-    async def app(scope, receive, send):
-        endpoint_algorithm()
-        await send({"type": "http.response.start", "status": 201, "headers": []})
-        await send({"type": "http.response.body", "body": b"{}"})
-
-    async def receive():
-        return {"type": "http.disconnect"}
-
-    async def send(_message):
-        return None
-
-    history = TraceHistory()
-    middleware = PylierASGIMiddleware(app, history=history)
-    span_context = SpanContext(
-        trace_id=0x1234,
-        span_id=0x5678,
-        is_remote=False,
-        trace_flags=TraceFlags(TraceFlags.SAMPLED),
-    )
-    token = otel_context.attach(set_span_in_context(NonRecordingSpan(span_context)))
-    try:
-        asyncio.run(
-            middleware(
-                {"type": "http", "method": "POST", "path": "/documents", "headers": []},
-                receive,
-                send,
-            )
-        )
-    finally:
-        otel_context.detach(token)
-
-    graph = history.to_view_dict()["traces"][0]
-    root = next(node for node in graph["nodes"] if node["kind"] == "fastapi")
-    assert root["name"] == "POST /documents"
-    assert root["is_start"] is True
-    assert graph["root"]["otel_trace_id"] == f"{0x1234:032x}"
-    assert graph["endpoint"]["status_code"] == 201
-    assert next(node for node in graph["nodes"] if node["name"].endswith("endpoint_algorithm"))["kind"] == "endpoint"
-    control = next(link for link in graph["links"] if link["kind"] == "call")
-    assert control["source"] == root["id"]
-    assert control["target"].endswith("endpoint_algorithm")
-    completion = next(link for link in graph["links"] if link["kind"] == "return")
-    assert completion["source"].endswith("endpoint_algorithm")
-    assert completion["target"] == root["id"]
-    assert completion["payload"] == "dict"
-
-
-def test_relation_kinds_can_coexist_between_the_same_nodes():
-    trace = Trace("relations")
-    trace.add_edge("source", "target", payload_type="str")
-    trace.add_relation("source", "target", "call")
-    trace.add_relation("source", "target", "return")
-
-    assert {(edge.source, edge.target, edge.kind) for edge in trace.edges.values()} == {
-        ("source", "target", "data"),
-        ("source", "target", "call"),
-        ("source", "target", "return"),
-    }
-
-
-def test_universal_otel_bridge_imports_raw_span_and_parent_relation():
-    otel_sdk_trace = pytest.importorskip("opentelemetry.sdk.trace")
-    from opentelemetry import context as otel_context
-    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
-
-    from pylier.model import TraceHistory
-    from pylier.tracing.otel import instrument_otel
-
-    history = TraceHistory()
-    request_trace = Trace("POST /locations")
-    request_trace.set_request_root(
-        method="POST", route="/locations", otel_trace_id=f"{0x1234:032x}", otel_span_id=f"{0x5678:016x}"
-    )
-    history.add(request_trace)
-    provider = otel_sdk_trace.TracerProvider()
-    instrument_otel(provider=provider, history=history)
-    parent = SpanContext(trace_id=0x1234, span_id=0x5678, is_remote=False, trace_flags=TraceFlags(TraceFlags.SAMPLED))
-    token = otel_context.attach(set_span_in_context(NonRecordingSpan(parent)))
-    try:
-        with provider.get_tracer("sqlite3").start_as_current_span("INSERT INTO locations") as span:
-            span.set_attribute("db.statement", "INSERT INTO locations (location) VALUES (?)")
-            span.add_event("db.parameters", {"location": "Europe/Bratislava"})
-    finally:
-        otel_context.detach(token)
-
-    imported = next(node for node in request_trace.nodes.values() if node.kind == "otel")
-    assert imported.otel["attributes"]["db.statement"].endswith("VALUES (?)")
-    assert imported.otel["events"][0]["attributes"]["location"] == "Europe/Bratislava"
-    assert any(
-        edge.kind == "otel_parent" and edge.source == request_trace.root_node_id
-        for edge in request_trace.edges.values()
-    )
 
 
 def test_versions_split_topology_vs_execution():

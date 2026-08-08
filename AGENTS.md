@@ -71,29 +71,20 @@ tooling without an explicit decision.
 - Invariant: **node level gates capture; global level gates metadata richness.**
   Don't conflate them.
 
-### Transport: logfire-style, sidecar-first, OTel-ready
+### Transport: standalone, sidecar-first
 - In-memory trace is the default (backing tests and `render()`).
-- `pylier.trace(..., sidecar=...)` writes **already-edge-resolved** events to a
-  JSONL sidecar for offline replay / cross-process consumers.
-- `pylier.instrument_otel()` attaches an optional, in-process SDK
-  `SpanProcessor` that imports every completed span belonging to a retained
-  pylier trace as an inspectable OTel node, including raw attributes, events,
-  links, status, resource, and instrumentation metadata. It adds no OTel
-  dependency to the base package.
-- `pylier.instrument_fastapi(app)` enables that bridge and makes the active
-  FastAPI server span the external `START` root. Decorated nodes create OTel
-  child spans only while an OTel span is active, so client spans such as SQLite
-  inherit exact OTel parents. An OTel receiver for exported/cross-process spans
-  remains future work.
+- `pylier.trace(..., sidecar=...)` writes resolved handoff events to a JSONL
+  sidecar for offline replay and future remote viewers.
+- pylier has no OpenTelemetry, Logfire, FastAPI, or cloud dependency. It does
+  not import or mutate another tracer's context, so those tools can run beside
+  pylier independently.
 
 ### One render core, static + live
 - `render/template.html` is the single source of truth for the graph look. Both
   static (`pylier.render()`) and live (`pylier.serve()`) use it. Static embeds
   the JSON (incl. the `events` timeline) and replays the execution animation
   once on load; live subscribes to SSE (`/events`) and re-renders in place.
-  The live viewer retains every produced trace in a left root-trace history;
-  an OTel/FastAPI request additionally shows its endpoint tab and `START`
-  callout.
+  The live viewer retains every produced trace in a left root-trace history.
 - **Why:** one look everywhere; no drift between test artifacts and live
   preview. The template also falls back to embedded JSON for `file://` opens.
 - The client keeps a **persistent force simulation + D3 join** — never tear
@@ -130,25 +121,21 @@ src/pylier/
   config.py       # pydantic-settings (PYLIER_*, .env): level, sidecar path, port
   tracing/
     sidecar.py    # JSONL event sink (offline replay); edges already resolved
-  integrations/
-    fastapi.py    # optional active-OTel-span ASGI request adapter
-  tracing/otel.py # generic in-process SDK SpanProcessor bridge
   render/
     template.html # THE renderer (D3 v7). Placeholders consumed by html.py
     html.py       # injects graph JSON into template; build_html / render_to_file
   server.py       # stdlib threaded viewer: GET / (html) + GET /graph (json)
 tests/test_core.py
 examples/ingest.py
-examples/fastapi_time.py  # runnable OTel-compatible FastAPI request example
+examples/pseudo.py  # canonical nested-handoff example
 ```
 
 ### Load-bearing invariants (don't break these)
-- **Fingerprinting happens only in `recorder.py`** (via `fingerprint.py`). Sinks,
-  the viewer, and imported OTel spans consume *resolved* data edges — never
-  re-fingerprint external span data.
-- **Relation identity is `(source, target, kind)`.** Data, call, OTel-parent,
-  and dashed return relations may coexist between the same operations. The
-  execution contextvar is never used to infer data edges.
+- **Fingerprinting happens only in `recorder.py`** (via `fingerprint.py`).
+  Sinks and the viewer consume resolved handoff edges — never fingerprint.
+- **Relation identity is `(source, target)`.** Entry arguments and exit values
+  are handoffs in opposite directions; `Edge.metadata["phase"]` is only a UI
+  hint for rendering a curved return path.
 - **Level filtering runs before instrumentation.** Uncaptured nodes call the
   raw function with zero overhead and register nothing — otherwise they'd
   create phantom edges into captured nodes.
