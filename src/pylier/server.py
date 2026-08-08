@@ -158,42 +158,76 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
             exec_version_since = 0
             event_index_since = 0
             history_version = -1
+            history_graph_versions: dict[str, int] = {}
+            history_exec_versions: dict[str, int] = {}
+            history_event_indices: dict[str, int] = {}
             try:
                 while True:
+                    wrote = False
                     if isinstance(captured_trace, TraceHistory):
                         history_version = captured_trace.wait_for_change(history_version, timeout=_SSE_HEARTBEAT)
-                        graph_v, exec_v = history_version, 0
+                        traces = captured_trace.snapshot_traces()
+                        topology_changed = any(
+                            trace.graph_version > history_graph_versions.get(trace.id, -1) for trace in traces
+                        )
+                        if topology_changed:
+                            payload = json.dumps(graph_payload(), default=str)
+                            self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
+                            history_graph_versions = {trace.id: trace.graph_version for trace in traces}
+                            wrote = True
+                        batch_events = []
+                        for trace in traces:
+                            previous_exec = history_exec_versions.get(trace.id, 0)
+                            if trace.exec_version <= previous_exec:
+                                continue
+                            event_index = history_event_indices.get(trace.id, 0)
+                            event_index, new_events = trace.events_since(event_index)
+                            history_event_indices[trace.id] = event_index
+                            history_exec_versions[trace.id] = trace.exec_version
+                            batch_events.extend(
+                                {
+                                    "trace_id": trace.id,
+                                    "ts": event.ts,
+                                    "node_id": event.node_id,
+                                    "kind": event.kind,
+                                    "edges": event.edges,
+                                }
+                                for event in new_events
+                            )
+                        if batch_events:
+                            payload = json.dumps(batch_events, default=str)
+                            self.wfile.write(f"event: exec\ndata: {payload}\n\n".encode())
+                            wrote = True
                     else:
                         graph_v, exec_v = captured_trace.wait_for_change(
                             graph_since, exec_version_since, timeout=_SSE_HEARTBEAT
                         )
-                    wrote = False
-                    if graph_v > graph_since:
-                        payload = json.dumps(graph_payload(), default=str)
-                        self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
-                        graph_since = graph_v
-                        wrote = True
-                    if not isinstance(captured_trace, TraceHistory) and exec_v > exec_version_since:
-                        event_index_since, new_events = captured_trace.events_since(event_index_since)
-                        # Latency updates advance the execution version without adding a
-                        # timeline event. Advance its cursor either way; otherwise the
-                        # server would spin forever emitting empty ``exec`` batches.
-                        exec_version_since = exec_v
-                        if new_events:
-                            batch = json.dumps(
-                                [
-                                    {
-                                        "ts": ev.ts,
-                                        "node_id": ev.node_id,
-                                        "kind": ev.kind,
-                                        "edges": ev.edges,
-                                    }
-                                    for ev in new_events
-                                ],
-                                default=str,
-                            )
-                            self.wfile.write(f"event: exec\ndata: {batch}\n\n".encode())
+                        if graph_v > graph_since:
+                            payload = json.dumps(graph_payload(), default=str)
+                            self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
+                            graph_since = graph_v
                             wrote = True
+                        if exec_v > exec_version_since:
+                            event_index_since, new_events = captured_trace.events_since(event_index_since)
+                            # Latency updates advance the execution version without adding a
+                            # timeline event. Advance its cursor either way; otherwise the
+                            # server would spin forever emitting empty ``exec`` batches.
+                            exec_version_since = exec_v
+                            if new_events:
+                                batch = json.dumps(
+                                    [
+                                        {
+                                            "ts": ev.ts,
+                                            "node_id": ev.node_id,
+                                            "kind": ev.kind,
+                                            "edges": ev.edges,
+                                        }
+                                        for ev in new_events
+                                    ],
+                                    default=str,
+                                )
+                                self.wfile.write(f"event: exec\ndata: {batch}\n\n".encode())
+                                wrote = True
                     if wrote:
                         self.wfile.flush()
                     else:

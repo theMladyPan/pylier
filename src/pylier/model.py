@@ -564,11 +564,14 @@ class TraceHistory:
         trace.add_listener(self._on_trace_change)
         return trace
 
+    def snapshot_traces(self) -> list[Trace]:
+        """Return a stable shallow list of retained traces for SSE diffing."""
+        with self._cond:
+            return list(self.traces.values())
+
     def to_view_dict(self) -> dict:
         """Serialize all retained traces in newest-first viewer order."""
-        with self._cond:
-            traces = list(self.traces.values())
-        return {"traces": [trace.to_graph_dict() for trace in reversed(traces)]}
+        return {"traces": [trace.to_graph_dict() for trace in reversed(self.snapshot_traces())]}
 
     def wait_for_change(self, version: int, timeout: float) -> int:
         """Wait until retained history or one of its traces changes."""

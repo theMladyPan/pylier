@@ -149,14 +149,14 @@
   #details .edges { margin-top: 8px; }
   #details .edge-line { font-size: 12px; margin: 2px 0; }
   #details .edge-line .arr { color: var(--accent); }
-  .invocation-list { display: grid; gap: 6px; margin-top: 9px; }
-  .invocation-card { border: 1px solid var(--panel-border); border-radius: 6px; background: var(--panel-2); overflow: hidden; }
-  .invocation-toggle { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; width: 100%; gap: 7px; align-items: center; padding: 8px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: 11px var(--mono); }
+  .invocation-list { display: grid; gap: 4px; margin-top: 6px; }
+  .invocation-card { border: 1px solid var(--panel-border); border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+  .invocation-toggle { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; width: 100%; gap: 6px; align-items: center; padding: 6px 8px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: 11px var(--mono); }
   .invocation-toggle:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
   .invocation-toggle .chevron { color: var(--muted); }
   .invocation-toggle .call-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .invocation-toggle .call-meta { color: var(--muted); white-space: nowrap; }
-  .invocation-body { border-top: 1px solid var(--panel-border); padding: 8px; }
+  .invocation-body { border-top: 1px solid var(--panel-border); padding: 5px 8px; }
   .invocation-body .payload-title { color: var(--muted); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; margin: 0 0 5px; }
   .invocation-body pre { margin: 0; max-height: 260px; }
   .json-key { color: var(--type-float); }
@@ -165,12 +165,13 @@
   .json-boolean { color: var(--type-bool); }
   .json-null { color: var(--muted); }
   .invocation-hint { color: var(--muted); font-size: 11px; margin: 4px 0 0; }
-  .invocation-io { display: grid; gap: 5px; }
-  .io-toggle { display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 0; border: 0; background: transparent; color: var(--text); cursor: pointer; font: 11px var(--mono); text-align: left; }
+  .invocation-io { display: grid; gap: 2px; }
+  .io-toggle { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 0; border: 0; background: transparent; color: var(--text); cursor: pointer; font: 11px var(--mono); text-align: left; }
   .io-toggle:hover { color: var(--accent); }
   .io-toggle .chevron { color: var(--muted); }
   .io-toggle .io-meta { margin-left: auto; color: var(--muted); }
-  .io-payload { border-top: 1px solid var(--panel-border); padding-top: 6px; }
+  .io-payload { border-top: 1px solid var(--panel-border); padding: 4px 0; }
+  .io-payload pre.value { padding: 4px 6px; max-height: 200px; }
   #details pre.value {
     background: var(--bg); border: 1px solid var(--panel-border); border-radius: 6px;
     padding: 6px; font: 11px var(--mono); max-height: 240px; overflow: auto;
@@ -589,7 +590,9 @@ if (LIVE) {
   es.addEventListener("exec", (e) => {
     const events = JSON.parse(e.data);
     logSseEvent("exec", events);
-    playEvents(events);
+    // History-mode batches carry a trace ID; do not animate another trace in
+    // the currently selected graph tab.
+    playEvents(events.filter(event => !event.trace_id || event.trace_id === selectedTraceId));
   });
   es.onerror = () => { es.close(); };
 }
