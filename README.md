@@ -29,8 +29,9 @@
 </td>
 </tr>
 <tr>
-<td align="center"><b>Application Flow</b><br>Caller, callee, and return handoffs.</td>
-<td align="center"><b>Data Flow</b><br>Producer-to-consumer value provenance.</td>
+<td align="center"><b>Application Flow</b><br>direct argument, return, and exception handoffs between callers and callees. Suitable to understand how application is made</td>
+<td align="center"><b>Data Flow</b><br>producer-to-consumer value provenance. It links a returned
+  value directly to every decorated consumer. Suitable to understand where and what data goes</td>
 </tr>
 </table>
 
@@ -55,9 +56,7 @@
 </tr>
 </table>
 
-## Try the rendered demos
-
-Open a self-contained replay in GitHub Pages—no local install or server needed:
+## Try demos
 
 - [Document ingestion demo](https://theMladyPan.github.io/pylier/ingest.html)
 - [Fulfillment workflow demo](https://theMladyPan.github.io/pylier/fulfillment.html)
@@ -108,15 +107,7 @@ with pylier.trace("document-ingest"):
 pylier.render("document-ingest.html")  # interactive, standalone HTML
 ```
 
-## Two views of one run
-
-The viewer switches between the two complementary perspectives pictured above:
-
-- **Application Flow** — direct argument, return, and exception handoffs between
-  callers and callees. Top-level calls connect to the trace root.
-- **Data Flow** — producer-to-consumer value provenance. It links a returned
-  value directly to every decorated consumer, hides trace-root/external values,
-  and does not draw orchestration round trips.
+## Notes
 
 For a plain-Python transformation or join that loses value provenance, preserve
 its sources explicitly:
