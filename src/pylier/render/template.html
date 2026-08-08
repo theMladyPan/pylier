@@ -197,7 +197,7 @@
   .filter-mode { display: flex; gap: 12px; margin-top: 12px; font-size: 12px; }
   .filter-mode label { cursor: pointer; }
   #footer {
-    flex: 0 0 34px; min-width: 0; border-top: 1px solid var(--panel-border); background: var(--panel-2);
+    position: relative; flex: 0 0 34px; min-width: 0; border-top: 1px solid var(--panel-border); background: var(--panel-2);
     color: var(--muted); font-size: 10px; overflow: hidden;
   }
   #footer.console-open { flex-basis: 190px; display: flex; flex-direction: column; }
@@ -207,6 +207,11 @@
   .console-toggle { margin-left: auto; }
   .console-toggle:hover, .console-clear:hover { color: var(--text); }
   #event-console { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--panel-border); background: var(--bg); }
+  #event-console[hidden] { display: none; }
+  .console-resize-handle { display: none; position: absolute; z-index: 3; top: -5px; left: 0; width: 100%; height: 10px; cursor: ns-resize; }
+  .console-resize-handle::after { content: ""; position: absolute; top: 4px; left: 0; right: 0; height: 1px; background: transparent; }
+  .console-resize-handle:hover::after, .console-resize-handle.dragging::after { background: var(--accent); }
+  #footer.console-open .console-resize-handle { display: block; }
   .console-head { flex: 0 0 28px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--panel-border); color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
   .console-clear { margin-left: auto; text-transform: none; letter-spacing: 0; }
   #event-log { flex: 1; min-height: 0; overflow: auto; padding: 7px 12px; font: 11px/1.55 var(--mono); }
@@ -323,6 +328,7 @@
     <div id="endpoint-bar" aria-label="Endpoints"></div>
     <svg id="graph"></svg>
     <footer id="footer" aria-label="Payload type legend and SSE event console">
+      <div class="console-resize-handle" id="console-resize" title="Resize SSE console"></div>
       <div class="footer-bar">
         <div class="footer-legend" aria-label="Payload type legend">
           <span class="type-key"><i class="bool"></i>bool</span><span class="type-key"><i class="int"></i>int</span>
@@ -1365,8 +1371,20 @@ function setSidebarWidth(width, persist = true) {
   if (persist) try { localStorage.setItem("pylier-sidebar-width", String(bounded)); } catch { /* private mode */ }
   resizeGraph();
 }
+function setConsoleHeight(height, persist = true) {
+  const maxHeight = Math.max(110, footer.parentElement.clientHeight - 100);
+  const bounded = Math.max(110, Math.min(maxHeight, height));
+  footer.style.flexBasis = `${bounded}px`;
+  if (persist) try { localStorage.setItem("pylier-console-height", String(bounded)); } catch { /* private mode */ }
+  resizeGraph();
+}
 function setConsoleCollapsed(collapsed, persist = true) {
   footer.classList.toggle("console-open", !collapsed);
+  if (collapsed) {
+    footer.style.removeProperty("flex-basis");
+  } else if (Number.isFinite(savedConsoleHeight)) {
+    setConsoleHeight(savedConsoleHeight, false);
+  }
   eventConsole.hidden = collapsed;
   consoleToggle.setAttribute("aria-expanded", String(!collapsed));
   consoleToggle.textContent = collapsed ? "SSE console ▲" : "SSE console ▼";
@@ -1379,6 +1397,24 @@ d3.select("#b-filters").on("click", () => setSectionCollapsed(filters, document.
 d3.select("#b-sidebar").on("click", () => setSidebarCollapsed(!sidebar.classList.contains("sidebar-collapsed")));
 d3.select("#b-console").on("click", () => setConsoleCollapsed(!eventConsole.hidden));
 d3.select("#b-console-clear").on("click", () => { sseLog.length = 0; pendingSseLog.length = 0; renderSseLog(); });
+const consoleResizeHandle = document.getElementById("console-resize");
+consoleResizeHandle.addEventListener("pointerdown", event => {
+  event.preventDefault();
+  consoleResizeHandle.classList.add("dragging");
+  consoleResizeHandle.setPointerCapture(event.pointerId);
+  const move = pointerEvent => {
+    const bounds = footer.parentElement.getBoundingClientRect();
+    setConsoleHeight(bounds.bottom - pointerEvent.clientY, false);
+  };
+  const end = () => {
+    consoleResizeHandle.classList.remove("dragging");
+    try { localStorage.setItem("pylier-console-height", String(footer.offsetHeight)); } catch { /* private mode */ }
+    consoleResizeHandle.removeEventListener("pointermove", move);
+    consoleResizeHandle.removeEventListener("pointerup", end);
+  };
+  consoleResizeHandle.addEventListener("pointermove", move);
+  consoleResizeHandle.addEventListener("pointerup", end);
+});
 const resizeHandle = document.getElementById("sidebar-resize");
 resizeHandle.addEventListener("pointerdown", event => {
   event.preventDefault();
@@ -1417,6 +1453,12 @@ const savedTracesCollapsed = (() => { try { return localStorage.getItem("pylier-
 const savedFiltersCollapsed = (() => { try { return localStorage.getItem("pylier-filters-collapsed") === "true"; } catch { return false; } })();
 const savedSidebarCollapsed = (() => { try { return localStorage.getItem("pylier-sidebar-collapsed") === "true"; } catch { return false; } })();
 const savedConsoleCollapsed = (() => { try { return localStorage.getItem("pylier-console-collapsed") !== "false"; } catch { return true; } })();
+const savedConsoleHeight = (() => {
+  try {
+    const stored = localStorage.getItem("pylier-console-height");
+    return stored === null ? NaN : Number(stored);
+  } catch { return NaN; }
+})();
 if (Number.isFinite(savedSidebarWidth)) setSidebarWidth(savedSidebarWidth, false);
 setEdgeMode(savedEdgeMode, false);
 setLeftCollapsed(savedLeftCollapsed, false);
