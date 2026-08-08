@@ -149,6 +149,17 @@
   #details .edges { margin-top: 8px; }
   #details .edge-line { font-size: 12px; margin: 2px 0; }
   #details .edge-line .arr { color: var(--accent); }
+  .invocation-list { display: grid; gap: 6px; margin-top: 9px; }
+  .invocation-card { border: 1px solid var(--panel-border); border-radius: 6px; background: var(--panel-2); overflow: hidden; }
+  .invocation-toggle { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; width: 100%; gap: 7px; align-items: center; padding: 8px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: 11px var(--mono); }
+  .invocation-toggle:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .invocation-toggle .chevron { color: var(--muted); }
+  .invocation-toggle .call-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .invocation-toggle .call-meta { color: var(--muted); white-space: nowrap; }
+  .invocation-body { border-top: 1px solid var(--panel-border); padding: 8px; }
+  .invocation-body .payload-title { color: var(--muted); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; margin: 0 0 5px; }
+  .invocation-body pre { margin: 0; max-height: 260px; }
+  .invocation-hint { color: var(--muted); font-size: 11px; margin: 4px 0 0; }
   #details pre.value {
     background: var(--bg); border: 1px solid var(--panel-border); border-radius: 6px;
     padding: 6px; font: 11px var(--mono); max-height: 240px; overflow: auto;
@@ -1074,19 +1085,24 @@ function renderDetails(d) {
     .html(`${d.name} <span class="arr">→</span> ${(nodeByIdNow(l.target.id || l.target)?.name) || (l.target.id || l.target)} · ${l.payload || ""}`));
 }
 
-async function expandInvocation(container, invocationId) {
-  const detail = container.append("div").attr("class", "value").text("Loading full payload…");
+const invocationPayloadCache = new Map();
+async function expandInvocation(body, invocationId) {
+  const detail = body.append("pre").attr("class", "value").text("Loading captured payload…");
   if (!LIVE) {
     detail.text("Full payload is available only in the live viewer.");
     return;
   }
   try {
-    const response = await fetch(`/invocations/${encodeURIComponent(selectedTraceId)}/${encodeURIComponent(invocationId)}/payload`);
-    if (!response.ok) {
-      detail.text(await response.text());
-      return;
+    let payload = invocationPayloadCache.get(invocationId);
+    if (!payload) {
+      const response = await fetch(`/invocations/${encodeURIComponent(selectedTraceId)}/${encodeURIComponent(invocationId)}/payload`);
+      if (!response.ok) {
+        detail.text(await response.text());
+        return;
+      }
+      payload = await response.json();
+      invocationPayloadCache.set(invocationId, payload);
     }
-    const payload = await response.json();
     detail.text(`Arguments\n${payload.arguments || "{}"}\n\nResult\n${payload.result || "null"}`);
   } catch {
     detail.text("Could not load the retained payload.");
@@ -1105,31 +1121,47 @@ function renderEdgeDetails(l) {
   if (l.size != null) det.append("div").attr("class", "drow").html(`<span class="k">size</span><span class="v">${l.size}</span>`);
   det.append("div").attr("class", "drow").html(`<span class="k">count</span><span class="v">${l.count || 1}×</span>`);
   if (l.handoffs?.length) {
-    det.append("div").attr("class", "drow").html(`<span class="k">executions</span><span class="v">${l.handoffs.length} distinct calls</span>`);
-    const calls = det.append("div").attr("class", "edges");
+    det.append("div").attr("class", "drow").html(`<span class="k">calls</span><span class="v">${l.handoffs.length} observed</span>`);
+    det.append("p").attr("class", "invocation-hint").text("Expand a call to load its captured arguments and result.");
+    const invocationById = new Map((loadData().invocations || []).map(invocation => [invocation.id, invocation]));
+    const calls = det.append("div").attr("class", "invocation-list");
     l.handoffs.forEach((handoff, index) => {
       const invocationId = handoff.invocation_id || handoff.consumer_invocation_id;
-      const row = calls.append("div").attr("class", "edge-line");
-      const toggle = row.append("button").attr("type", "button").text(`▶ #${index + 1}`);
-      row.append("span").text(`  ${(handoff.arguments || [handoff.parameter || "return"]).join(", ")}`);
+      const invocation = invocationById.get(invocationId);
+      const summary = handoff.arguments?.join(", ") || handoff.parameter || "return value";
+      const duration = invocation?.duration_ms == null ? "pending" : `${fmtMs(invocation.duration_ms)} ms`;
+      const type = invocation?.result_type || l.payload || "unknown";
+      const card = calls.append("section").attr("class", "invocation-card");
+      const toggle = card.append("button").attr("type", "button").attr("class", "invocation-toggle");
+      toggle.append("span").attr("class", "chevron").text("▶");
+      toggle.append("span").attr("class", "call-summary").text(`#${index + 1} · ${summary}`);
+      toggle.append("span").attr("class", "call-meta").text(`${type} · ${duration}`);
       if (!invocationId) {
-        toggle.attr("disabled", true);
+        toggle.attr("disabled", true).attr("title", "No invocation detail is available for this relation.");
         return;
       }
       toggle.on("click", function () {
         const button = d3.select(this);
-        const existing = row.select("div.value");
+        const existing = card.select("div.invocation-body");
         if (!existing.empty()) {
           existing.remove();
-          button.text(`▶ #${index + 1}`);
+          button.select(".chevron").text("▶");
           return;
         }
-        button.text(`▼ #${index + 1}`);
-        expandInvocation(row, invocationId);
+        button.select(".chevron").text("▼");
+        const body = card.append("div").attr("class", "invocation-body");
+        body.append("div").attr("class", "payload-title").text(`Invocation ${invocationId}`);
+        if (invocation?.payload_state === "disabled") {
+          body.append("div").attr("class", "invocation-hint").text("Full values were not captured. Set PYLIER_CAPTURE_VALUES=1 for a future run.");
+        } else if (invocation?.payload_state === "evicted") {
+          body.append("div").attr("class", "invocation-hint").text("Full payload was evicted by the configured retention limit.");
+        } else {
+          expandInvocation(body, invocationId);
+        }
       });
     });
   }
-  if (l.value != null) {
+  if (l.value != null && !l.handoffs?.length) {
     det.append("div").attr("class", "drow").html(`<span class="k">value</span><span class="v"></span>`);
     det.append("pre").attr("class", "value").text(l.value);
   } else if (l.preview != null) {
