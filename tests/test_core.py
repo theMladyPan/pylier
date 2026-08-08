@@ -46,6 +46,21 @@ def test_trace_root_captures_nested_argument_and_return_handoffs(monkeypatch):
     assert json.loads(handoffs[f2_id, root_id].value) == "42 hello"
 
 
+def test_node_call_count_includes_first_invocation():
+    @pylier.node
+    def repeat(value: int) -> int:
+        return value
+
+    with pylier.trace() as trace:
+        repeat(1)
+        repeat(2)
+        repeat(3)
+
+    node = next(node for node in trace.nodes.values() if node.name.endswith("repeat"))
+    assert node.calls == 3
+    assert len(trace.invocations) == 3
+
+
 def test_nested_calls_prefer_direct_caller_handoffs_over_fingerprint_lineage():
     @pylier.node
     def extract_text():

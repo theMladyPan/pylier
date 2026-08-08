@@ -300,6 +300,10 @@ class Trace:
         with self._cond:
             existing = self.nodes.get(node.id)
             if existing is None:
+                # Creating the node happens on its first decorated invocation.
+                # Count that call too; otherwise node cards under-report every
+                # function by one compared with invocation metadata.
+                node.calls += 1
                 self.nodes[node.id] = node
                 self._bump_graph()
                 return node
