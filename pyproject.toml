@@ -15,6 +15,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pylier"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/pylier/py.typed" = "pylier/py.typed"
+
 [dependency-groups]
 dev = [
     "pytest>=8",
