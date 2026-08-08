@@ -434,9 +434,10 @@ function nodeW(d) {
   const longest = Math.max((d.name || "").length, (d.category || "").length);
   return Math.max(176, longest * 7.2 + 56);
 }
-function fmtMs(v) {
-  if (v == null) return null;
-  return v < 1 ? v.toFixed(2) : v < 100 ? Math.round(v) + "" : Math.round(v) + "";
+function fmtDuration(ms) {
+  if (ms == null) return null;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 }
 
 let selectedTraceId = null;
@@ -732,7 +733,9 @@ function traceStartNode(data, nodes) {
 }
 
 function updateStartMarker(data, nodes) {
-  const start = traceStartNode(data, nodes);
+  // Data Flow deliberately hides orchestration/root concepts; its links are
+  // direct producer-to-consumer provenance rather than trace entry paths.
+  const start = state.perspective === "data" ? null : traceStartNode(data, nodes);
   const startJoin = startsG.selectAll("g.trace-start").data(start ? [start] : [], node => node.id);
   startJoin.exit().remove();
   const startEnter = startJoin.enter().append("g").attr("class", "trace-start");
@@ -850,12 +853,12 @@ function update() {
   nodeSel.select("text.lat")
     .each(function (d) {
       const sel = d3.select(this);
-      const last = fmtMs(d.last_ms);
-      const avg = fmtMs(d.avg_ms);
+      const last = fmtDuration(d.last_ms);
+      const avg = fmtDuration(d.avg_ms);
       sel.text("");
       if (last != null) {
-        sel.append("tspan").text(`${last} ms`);
-        if (avg != null && avg !== last) sel.append("tspan").attr("class", "avg").text(` [${avg}]`);
+        sel.append("tspan").text(last);
+        if (avg != null && avg !== last) sel.append("tspan").attr("class", "avg").text(` · avg ${avg}`);
       }
     })
     .attr("x", d => nodeW(d) / 2 - 10)
@@ -1114,8 +1117,8 @@ function renderDetails(d) {
   det.append("div").attr("class", "drow").html(`<span class="k">module</span><span class="v">${d.module || d.category || ""}</span>`);
   det.append("div").attr("class", "drow").html(`<span class="k">calls</span><span class="v">${d.calls || 0}×</span>`);
   if (d.last_ms != null) {
-    const avg = d.avg_ms != null && fmtMs(d.avg_ms) !== fmtMs(d.last_ms) ? ` · avg ${fmtMs(d.avg_ms)} ms` : "";
-    det.append("div").attr("class", "drow").html(`<span class="k">latency</span><span class="v">${fmtMs(d.last_ms)} ms${avg}</span>`);
+    const avg = d.avg_ms != null && fmtDuration(d.avg_ms) !== fmtDuration(d.last_ms) ? ` · avg ${fmtDuration(d.avg_ms)}` : "";
+    det.append("div").attr("class", "drow").html(`<span class="k">latency</span><span class="v">${fmtDuration(d.last_ms)}${avg}</span>`);
   }
   det.append("div").attr("class", "drow").html(`<span class="k">kind</span><span class="v">${d.is_root ? "trace root" : d.is_async ? "async" : "sync"}</span>`);
   const st = active.has(d.id) ? (d.is_async ? "async waiting" : "sync busy") : "idle / done";
@@ -1140,7 +1143,7 @@ function renderDetails(d) {
     const toggle = card.append("button").attr("type", "button").attr("class", "invocation-toggle");
     toggle.append("span").attr("class", "chevron").text("▶");
     toggle.append("span").attr("class", "call-summary").text(`Call #${index + 1}`);
-    const callState = invocation.exception ? "failed" : invocation.duration_ms == null ? "running" : `${fmtMs(invocation.duration_ms)} ms`;
+    const callState = invocation.exception ? "failed" : invocation.duration_ms == null ? "running" : fmtDuration(invocation.duration_ms);
     toggle.append("span").attr("class", "call-meta").text(callState);
     toggle.on("click", function () {
       const button = d3.select(this);
@@ -1260,7 +1263,7 @@ function renderEdgeDetails(l) {
       const invocation = invocationById.get(invocationId);
       const label = isReturn ? "Return value" : "Arguments";
       const summary = isReturn ? "" : (handoff.arguments?.join(", ") || handoff.parameter || "arguments");
-      const duration = invocation?.duration_ms == null ? "pending" : `${fmtMs(invocation.duration_ms)} ms`;
+      const duration = invocation?.duration_ms == null ? "pending" : fmtDuration(invocation.duration_ms);
       const type = isReturn ? (invocation?.result_type || l.payload || "unknown") : (l.payload || "unknown");
       const card = calls.append("section").attr("class", "invocation-card");
       const toggle = card.append("button").attr("type", "button").attr("class", "invocation-toggle");
