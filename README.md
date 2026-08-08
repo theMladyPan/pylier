@@ -19,12 +19,12 @@
 <tr>
 <td width="50%" align="center">
   <a href="https://theMladyPan.github.io/pylier/fulfillment.html">
-    <img src="assets/app-flow-view.png" alt="pylier Application Flow view showing nested fulfillment branches" width="100%">
+    <img src="https://raw.githubusercontent.com/theMladyPan/pylier/master/assets/app-flow-view.png" alt="pylier Application Flow view showing nested fulfillment branches" width="100%">
   </a>
 </td>
 <td width="50%" align="center">
   <a href="https://theMladyPan.github.io/pylier/fulfillment.html">
-    <img src="assets/data-flow-view.png" alt="pylier Data Flow view showing value provenance across fulfillment branches" width="100%">
+    <img src="https://raw.githubusercontent.com/theMladyPan/pylier/master/assets/data-flow-view.png" alt="pylier Data Flow view showing value provenance across fulfillment branches" width="100%">
   </a>
 </td>
 </tr>
