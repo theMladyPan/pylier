@@ -210,9 +210,15 @@
   .console-head { flex: 0 0 28px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--panel-border); color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
   .console-clear { margin-left: auto; text-transform: none; letter-spacing: 0; }
   #event-log { flex: 1; min-height: 0; overflow: auto; padding: 7px 12px; font: 11px/1.55 var(--mono); }
-  .console-entry { display: flex; gap: 10px; white-space: nowrap; }
+  .console-entry { border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent); }
+  .console-entry summary { display: grid; grid-template-columns: 12px 82px 46px minmax(0, 1fr); gap: 8px; align-items: center; padding: 3px 0; cursor: pointer; list-style: none; white-space: nowrap; }
+  .console-entry summary::-webkit-details-marker { display: none; }
+  .console-entry summary::before { content: "▶"; color: var(--muted); }
+  .console-entry[open] summary::before { content: "▼"; }
   .console-entry time { color: var(--muted); }
-  .console-entry .event-kind { color: var(--accent); min-width: 40px; }
+  .console-entry .event-kind { color: var(--accent); }
+  .console-entry .event-summary { overflow: hidden; text-overflow: ellipsis; }
+  .console-entry pre { margin: 0 0 6px 20px; max-height: 280px; overflow: auto; }
   .console-empty { color: var(--muted); font-style: italic; }
   .type-key { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
   .type-key i { width: 12px; height: 2px; display: inline-block; }
@@ -504,16 +510,22 @@ function summarizeSseEvent(kind, payload) {
 }
 
 function consoleLine(entry) {
-  const line = document.createElement("div");
+  const line = document.createElement("details");
   line.className = "console-entry";
+  const header = document.createElement("summary");
   const time = document.createElement("time");
   time.textContent = entry.time;
   const kind = document.createElement("span");
   kind.className = "event-kind";
   kind.textContent = entry.kind;
   const summary = document.createElement("span");
+  summary.className = "event-summary";
   summary.textContent = entry.summary;
-  line.append(time, kind, summary);
+  header.append(time, kind, summary);
+  const raw = document.createElement("pre");
+  raw.className = "value";
+  renderPayload(raw, entry.raw);
+  line.append(header, raw);
   return line;
 }
 
@@ -544,7 +556,12 @@ function flushSseLog() {
 }
 
 function logSseEvent(kind, payload) {
-  const entry = { time: formatSseTime(new Date()), kind, summary: summarizeSseEvent(kind, payload) };
+  const entry = {
+    time: formatSseTime(new Date()),
+    kind,
+    summary: summarizeSseEvent(kind, payload),
+    raw: JSON.stringify(payload, null, 2),
+  };
   sseLog.push(entry);
   pendingSseLog.push(entry);
   if (sseLog.length > SSE_LOG_LIMIT) sseLog.shift();
@@ -1169,7 +1186,8 @@ async function expandInvocation(body, invocationId, payloadField) {
 }
 
 function appendInvocationPayloadToggle(container, invocation, label, payloadField) {
-  const toggle = container.append("button").attr("type", "button").attr("class", "io-toggle");
+  const section = container.append("section").attr("class", "io-section");
+  const toggle = section.append("button").attr("type", "button").attr("class", "io-toggle");
   toggle.append("span").attr("class", "chevron").text("▶");
   toggle.append("span").text(label);
   toggle.append("span").attr("class", "io-meta").text(
@@ -1179,14 +1197,14 @@ function appendInvocationPayloadToggle(container, invocation, label, payloadFiel
   );
   toggle.on("click", function () {
     const button = d3.select(this);
-    const existing = container.select(`div.io-payload[data-field="${payloadField}"]`);
+    const existing = section.select("div.io-payload");
     if (!existing.empty()) {
       existing.remove();
       button.select(".chevron").text("▶");
       return;
     }
     button.select(".chevron").text("▼");
-    const payload = container.append("div").attr("class", "io-payload").attr("data-field", payloadField);
+    const payload = section.append("div").attr("class", "io-payload");
     if (payloadField === "exception") {
       payload.append("pre").attr("class", "value").text(invocation.exception || "Unknown error");
     } else if (invocation.payload_state === "disabled") {
