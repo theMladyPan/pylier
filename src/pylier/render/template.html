@@ -165,6 +165,12 @@
   .json-boolean { color: var(--type-bool); }
   .json-null { color: var(--muted); }
   .invocation-hint { color: var(--muted); font-size: 11px; margin: 4px 0 0; }
+  .invocation-io { display: grid; gap: 5px; }
+  .io-toggle { display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 0; border: 0; background: transparent; color: var(--text); cursor: pointer; font: 11px var(--mono); text-align: left; }
+  .io-toggle:hover { color: var(--accent); }
+  .io-toggle .chevron { color: var(--muted); }
+  .io-toggle .io-meta { margin-left: auto; color: var(--muted); }
+  .io-payload { border-top: 1px solid var(--panel-border); padding-top: 6px; }
   #details pre.value {
     background: var(--bg); border: 1px solid var(--panel-border); border-radius: 6px;
     padding: 6px; font: 11px var(--mono); max-height: 240px; overflow: auto;
@@ -1079,15 +1085,36 @@ function renderDetails(d) {
     const tagBox = tagRow.append("span").attr("class", "v");
     tagBox.selectAll("span.tag-chip").data(d.tags).join("span").attr("class", "tag-chip").text(tag => tag);
   }
-  const inb = linkData.filter(l => (l.target.id || l.target) === d.id);
-  const outb = linkData.filter(l => (l.source.id || l.source) === d.id);
+  const invocations = (loadData().invocations || []).filter(invocation => invocation.node_id === d.id);
   const box = det.append("div").attr("class", "edges");
-  box.append("div").attr("class", "drow").html(`<span class="k">in (${inb.length})</span><span class="v"></span>`);
-  inb.forEach(l => box.append("div").attr("class", "edge-line")
-    .html(`${(nodeByIdNow(l.source.id || l.source)?.name) || (l.source.id || l.source)} <span class="arr">→</span> ${d.name} · ${l.payload || ""}`));
-  box.append("div").attr("class", "drow").html(`<span class="k">out (${outb.length})</span><span class="v"></span>`);
-  outb.forEach(l => box.append("div").attr("class", "edge-line")
-    .html(`${d.name} <span class="arr">→</span> ${(nodeByIdNow(l.target.id || l.target)?.name) || (l.target.id || l.target)} · ${l.payload || ""}`));
+  box.append("div").attr("class", "drow").html(`<span class="k">calls</span><span class="v">${invocations.length} observed</span>`);
+  if (!invocations.length) {
+    box.append("p").attr("class", "invocation-hint").text("No invocation details were recorded for this node.");
+    return;
+  }
+  box.append("p").attr("class", "invocation-hint").text("Expand a call, then expand its inputs or output.");
+  const calls = box.append("div").attr("class", "invocation-list");
+  invocations.forEach((invocation, index) => {
+    const card = calls.append("section").attr("class", "invocation-card");
+    const toggle = card.append("button").attr("type", "button").attr("class", "invocation-toggle");
+    toggle.append("span").attr("class", "chevron").text("▶");
+    toggle.append("span").attr("class", "call-summary").text(`Call #${index + 1}`);
+    const callState = invocation.exception ? "failed" : invocation.duration_ms == null ? "running" : `${fmtMs(invocation.duration_ms)} ms`;
+    toggle.append("span").attr("class", "call-meta").text(callState);
+    toggle.on("click", function () {
+      const button = d3.select(this);
+      const existing = card.select("div.invocation-body");
+      if (!existing.empty()) {
+        existing.remove();
+        button.select(".chevron").text("▶");
+        return;
+      }
+      button.select(".chevron").text("▼");
+      const body = card.append("div").attr("class", "invocation-body invocation-io");
+      appendInvocationPayloadToggle(body, invocation, "Inputs", "arguments");
+      appendInvocationPayloadToggle(body, invocation, invocation.exception ? "Exception" : "Output", invocation.exception ? "exception" : "result");
+    });
+  });
 }
 
 const invocationPayloadCache = new Map();
@@ -1135,6 +1162,37 @@ async function expandInvocation(body, invocationId, payloadField) {
   }
 }
 
+function appendInvocationPayloadToggle(container, invocation, label, payloadField) {
+  const toggle = container.append("button").attr("type", "button").attr("class", "io-toggle");
+  toggle.append("span").attr("class", "chevron").text("▶");
+  toggle.append("span").text(label);
+  toggle.append("span").attr("class", "io-meta").text(
+    payloadField === "result" ? (invocation.result_type || "empty") :
+    payloadField === "exception" ? "error" :
+    `${invocation.arguments.length} parameter${invocation.arguments.length === 1 ? "" : "s"}`
+  );
+  toggle.on("click", function () {
+    const button = d3.select(this);
+    const existing = container.select(`div.io-payload[data-field="${payloadField}"]`);
+    if (!existing.empty()) {
+      existing.remove();
+      button.select(".chevron").text("▶");
+      return;
+    }
+    button.select(".chevron").text("▼");
+    const payload = container.append("div").attr("class", "io-payload").attr("data-field", payloadField);
+    if (payloadField === "exception") {
+      payload.append("pre").attr("class", "value").text(invocation.exception || "Unknown error");
+    } else if (invocation.payload_state === "disabled") {
+      payload.append("div").attr("class", "invocation-hint").text("Full values were not captured. Set PYLIER_CAPTURE_VALUES=1 for a future run.");
+    } else if (invocation.payload_state === "evicted") {
+      payload.append("div").attr("class", "invocation-hint").text("Full payload was evicted by the configured retention limit.");
+    } else {
+      expandInvocation(payload, invocation.id, payloadField);
+    }
+  });
+}
+
 function renderEdgeDetails(l) {
   const src = l.source.id || l.source, tgt = l.target.id || l.target;
   const srcName = nodeByIdNow(src)?.name || src, tgtName = nodeByIdNow(tgt)?.name || tgt;
@@ -1159,13 +1217,15 @@ function renderEdgeDetails(l) {
         : (handoff.consumer_invocation_id || handoff.invocation_id);
       const invocation = invocationById.get(invocationId);
       const label = isReturn ? "Return value" : "Arguments";
-      const summary = isReturn ? "return value" : (handoff.arguments?.join(", ") || handoff.parameter || "arguments");
+      const summary = isReturn ? "" : (handoff.arguments?.join(", ") || handoff.parameter || "arguments");
       const duration = invocation?.duration_ms == null ? "pending" : `${fmtMs(invocation.duration_ms)} ms`;
       const type = isReturn ? (invocation?.result_type || l.payload || "unknown") : (l.payload || "unknown");
       const card = calls.append("section").attr("class", "invocation-card");
       const toggle = card.append("button").attr("type", "button").attr("class", "invocation-toggle");
       toggle.append("span").attr("class", "chevron").text("▶");
-      toggle.append("span").attr("class", "call-summary").text(`${label} #${index + 1} · ${summary}`);
+      toggle.append("span").attr("class", "call-summary").text(
+        summary ? `${label} #${index + 1} · ${summary}` : `${label} #${index + 1}`
+      );
       toggle.append("span").attr("class", "call-meta").text(`${type} · ${duration}`);
       if (!invocationId) {
         toggle.attr("disabled", true).attr("title", "No invocation detail is available for this relation.");
@@ -1181,7 +1241,6 @@ function renderEdgeDetails(l) {
         }
         button.select(".chevron").text("▼");
         const body = card.append("div").attr("class", "invocation-body");
-        body.append("div").attr("class", "payload-title").text(`${label} #${index + 1}`);
         if (invocation?.payload_state === "disabled") {
           body.append("div").attr("class", "invocation-hint").text("Full values were not captured. Set PYLIER_CAPTURE_VALUES=1 for a future run.");
         } else if (invocation?.payload_state === "evicted") {
