@@ -9,9 +9,11 @@ resolved in the recorder before anything is emitted.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from pylier.tracing.sidecar import SidecarBackend
 
-Sink = Callable[[dict], None]
+# A sink receives an edge-resolved recorder event (never a raw value).
+Sink = Callable[[dict[str, Any]], None]
 
 __all__ = ["Sink", "SidecarBackend"]

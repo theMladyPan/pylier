@@ -25,7 +25,7 @@ import time
 import warnings
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, cast, overload
 
 from pylier.fingerprint import fingerprint, preview_of, serialize_value, size_of, tuple_member_type_names, type_name
 from pylier.model import Edge, Event, Level, Node, Trace, TraceHistory
@@ -46,8 +46,6 @@ __all__ = [
     "current_level",
     "derive_value",
 ]
-
-T = TypeVar("T")
 
 _active_trace: contextvars.ContextVar[Trace | None] = contextvars.ContextVar("pylier_active_trace", default=None)
 _level_override: contextvars.ContextVar[Level | None] = contextvars.ContextVar("pylier_level_override", default=None)
@@ -127,12 +125,12 @@ def resolve_trace(trace: Trace | None = None) -> Trace:
     return default_trace()
 
 
-def use_trace(trace: Trace | None) -> contextvars.Token:
+def use_trace(trace: Trace | None) -> contextvars.Token[Trace | None]:
     """Set the active trace for the current context (use in ``trace()``)."""
     return _active_trace.set(trace)
 
 
-def reset_trace(token: contextvars.Token) -> None:
+def reset_trace(token: contextvars.Token[Trace | None]) -> None:
     """Restore the active trace previously set by :func:`use_trace`."""
     _active_trace.reset(token)
 
@@ -147,7 +145,7 @@ def current_level() -> Level:
     return get_settings().level
 
 
-def set_level(level: Level | str) -> contextvars.Token:
+def set_level(level: Level | str) -> contextvars.Token[Level | None]:
     """Override the capture level for the current context.
 
     Returns a token; pass to :func:`reset_level` to restore. Intended for
@@ -156,7 +154,7 @@ def set_level(level: Level | str) -> contextvars.Token:
     return _level_override.set(_coerce_level(level))
 
 
-def reset_level(token: contextvars.Token) -> None:
+def reset_level(token: contextvars.Token[Level | None]) -> None:
     _level_override.reset(token)
 
 
@@ -237,7 +235,7 @@ def derive_value[T](value: T, *, from_: Iterable[object]) -> T:
 
 
 def _argument_handoff_details(
-    args: tuple, kwargs: dict, arguments: dict[str, Any], level: Level, capture: bool
+    args: tuple[Any, ...], kwargs: dict[str, Any], arguments: dict[str, Any], level: Level, capture: bool
 ) -> dict[str, Any]:
     """Summarize one inbound handoff without losing single-value type detail."""
     values = (*args, *kwargs.values())
@@ -253,7 +251,9 @@ def _argument_handoff_details(
     }
 
 
-def record_enter(trace: Trace, meta: NodeMeta, args: tuple, kwargs: dict) -> contextvars.Token:
+def record_enter(
+    trace: Trace, meta: NodeMeta, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> contextvars.Token[tuple[InvocationFrame, ...]]:
     """Register a call, preferring its direct caller over value lineage.
 
     A nested decorated call is an authoritative handoff from its active caller.
@@ -385,8 +385,14 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
         _emit(trace, meta, result=None, return_type=None)
         return
     return_type = type_name(result)
-    if return_target is not None and return_target != meta.id:
-        level = current_level()
+    # Computed unconditionally: the nested-return data edge and the
+    # completion preview below both use `level`, and a recursive decorated
+    # call (caller.node_id == meta.id) skips the application-flow edge block
+    # above — without this hoist `level` would be unbound there.
+    level = current_level()
+    # ``return_target`` is always a non-None node id (the caller, or the trace
+    # root when this is a top-level call); only the self-loop is skipped.
+    if return_target != meta.id:
         trace.add_edge(
             meta.id,
             return_target,
@@ -502,7 +508,7 @@ def _edge_dict(edge: Edge) -> dict[str, Any]:
     }
 
 
-def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: dict) -> T:
+def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple[Any, ...], kwargs: dict[str, Any]) -> T:
     """Wrap a sync call with enter/exit recording when the node is captured."""
     if meta.level > current_level():
         return func(*args, **kwargs)
@@ -522,7 +528,9 @@ def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple, kwargs: 
         _execution_stack.reset(execution_token)
 
 
-async def record_call_async[T](meta: NodeMeta, func: Callable[..., Awaitable[T]], args: tuple, kwargs: dict) -> T:
+async def record_call_async[T](
+    meta: NodeMeta, func: Callable[..., Awaitable[T]], args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> T:
     """Async counterpart of :func:`record_call`."""
     if meta.level > current_level():
         return await func(*args, **kwargs)
@@ -573,13 +581,29 @@ def _normalize_tags(tags: Sequence[str]) -> tuple[str, ...]:
     return tuple(normalized)
 
 
-def node_decorator(
-    func: Callable[..., Any] | None = None,
+@overload
+def node_decorator[**P, R](func: Callable[P, R], /) -> Callable[P, R]: ...
+
+
+@overload
+def node_decorator[**P, R](
     *,
     level: Level | str = Level.INFO,
     _tags: Sequence[str] = (),
-) -> Any:
+) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+
+def node_decorator[**P, R](
+    func: Callable[P, R] | None = None,
+    *,
+    level: Level | str = Level.INFO,
+    _tags: Sequence[str] = (),
+) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """Decorate a sync/async callable as a pipeline node.
+
+    The wrapped callable preserves its original parameter and return types
+    (via :class:`inspect.Parameter`-level ``ParamSpec``), so IDE autocompletion
+    and call-site type checks work unchanged after ``@pylier.node``.
 
     Args:
         level: Per-node capture level. ``"core"`` nodes record even at the
@@ -591,22 +615,29 @@ def node_decorator(
     resolved_level = _coerce_level(level)
     normalized_tags = _normalize_tags(_tags)
 
-    def wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
+    def wrap(fn: Callable[P, R]) -> Callable[P, R]:
         meta = make_meta(fn, resolved_level, normalized_tags)
         if inspect.iscoroutinefunction(fn):
-
+            # ParamSpec preserves the call signature; the casts below only
+            # satisfy this single generic implementation signature. The public
+            # overloads above define the user-facing type, which is exact.
             @functools.wraps(fn)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                return await record_call_async(meta, fn, args, kwargs)
+            async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+                return cast("R", await record_call_async(meta, fn, args, kwargs))
 
-            async_wrapper.pylier_meta = meta  # type: ignore[attr-defined]
-            return async_wrapper
+            # Attach declared metadata for the declared-but-uncalled node
+            # registry fast-follow; setattr keeps the wrapper's typed surface.
+            # B010: setattr (not direct assignment) avoids a type-checker error on
+            # the functools.wraps _Wrapped type while attaching node metadata.
+            setattr(async_wrapper, "pylier_meta", meta)  # noqa: B010
+            return cast("Callable[P, R]", async_wrapper)
 
         @functools.wraps(fn)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             return record_call(meta, fn, args, kwargs)
 
-        sync_wrapper.pylier_meta = meta  # type: ignore[attr-defined]
+        # See the async branch for why setattr is used here too.
+        setattr(sync_wrapper, "pylier_meta", meta)  # noqa: B010
         return sync_wrapper
 
     if func is not None and callable(func):

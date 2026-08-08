@@ -20,6 +20,7 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
+    "ty>=0.0.69",
 ]
 examples = []
 
@@ -33,3 +34,10 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ty]
+# Astral ty (beta) is the type checker. Run: `uv run ty check src`
+# Python target is inferred from `requires-python` above (>=3.14). Rule
+# severities use ty defaults; tune per-rule under [tool.ty.rules] if a future
+# ty release promotes an inherent-`Any` (dynamic JSON shapes) diagnostic to error.
+# Pin the dep version in [dependency-groups].dev to control beta churn.

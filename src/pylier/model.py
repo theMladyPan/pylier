@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from time import time
+from typing import Any
 from uuid import uuid4
 
 
@@ -71,10 +73,10 @@ class Edge:
     value: str | None = None
     # Entry/exit provenance is display metadata; every edge remains a handoff.
     kind: str = "data"
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     # Individual execution handoffs are retained even when the graph combines
     # repeated calls between the same two function nodes.
-    handoffs: list[dict] = field(default_factory=list)
+    handoffs: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -153,8 +155,8 @@ class Trace:
         self._invocation_payloads: OrderedDict[str, tuple[dict[str, str], int]] = OrderedDict()
         self._payload_bytes = 0
         # event sinks (e.g. SidecarBackend) notified after each resolved event.
-        # Typed loosely to keep this module free of tracing-layer imports.
-        self.sinks: list = []
+        # Typed as callables to keep this module free of tracing-layer imports.
+        self.sinks: list[Callable[[dict[str, Any]], None]] = []
         # fp -> source node id that produced this value. Latest producer wins
         # so a transformed-but-equal-content value still links to the most recent
         # origin, which is what callers actually consume.
@@ -171,7 +173,7 @@ class Trace:
         self.graph_version: int = 0
         self.exec_version: int = 0
         self._cond = threading.Condition()
-        self._listeners: list = []
+        self._listeners: list[Callable[[Trace], None]] = []
 
     def create_invocation(
         self, invocation_id: str, node_id: str, parent_invocation_id: str | None, arguments: list[str]
@@ -248,7 +250,7 @@ class Trace:
             self._invocation_sequence += 1
             return f"{self.id}:{self._invocation_sequence}"
 
-    def add_listener(self, listener) -> None:
+    def add_listener(self, listener: Callable[[Trace], None]) -> None:
         """Register a callback notified whenever graph or execution data changes."""
         with self._cond:
             self._listeners.append(listener)
@@ -291,7 +293,7 @@ class Trace:
                 self._cond.wait(timeout=timeout)
             return self.graph_version, self.exec_version
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         """Thread-safe copy of the current graph dict (acquires the change lock)."""
         with self._cond:
             return self.to_graph_dict()
@@ -340,8 +342,8 @@ class Trace:
         preview: str | None = None,
         payload_types: tuple[str, ...] = (),
         value: str | None = None,
-        metadata: dict | None = None,
-        handoff: dict | None = None,
+        metadata: dict[str, Any] | None = None,
+        handoff: dict[str, Any] | None = None,
     ) -> Edge:
         return self._add_edge_to(
             self.edges,
@@ -367,8 +369,8 @@ class Trace:
         preview: str | None = None,
         payload_types: tuple[str, ...] = (),
         value: str | None = None,
-        metadata: dict | None = None,
-        handoff: dict | None = None,
+        metadata: dict[str, Any] | None = None,
+        handoff: dict[str, Any] | None = None,
     ) -> Edge:
         with self._cond:
             key = (source, target)
@@ -437,12 +439,35 @@ class Trace:
                 return ()
             return ((direct_source[0], direct_source[1], "fingerprint"),)
 
-    def add_data_edge(self, source: str, target: str, **kwargs) -> Edge:
+    def add_data_edge(
+        self,
+        source: str,
+        target: str,
+        *,
+        payload_type: str = "unknown",
+        size: int | None = None,
+        preview: str | None = None,
+        payload_types: tuple[str, ...] = (),
+        value: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        handoff: dict[str, Any] | None = None,
+    ) -> Edge:
         """Add an aggregated fingerprint-inferred producer/consumer relation."""
-        return self._add_edge_to(self.data_edges, source, target, **kwargs)
+        return self._add_edge_to(
+            self.data_edges,
+            source,
+            target,
+            payload_type=payload_type,
+            size=size,
+            preview=preview,
+            payload_types=payload_types,
+            value=value,
+            metadata=metadata,
+            handoff=handoff,
+        )
 
     @staticmethod
-    def _edge_dict(edge: Edge) -> dict:
+    def _edge_dict(edge: Edge) -> dict[str, Any]:
         """Serialize one relation identically for either graph perspective."""
         return {
             "source": edge.source,
@@ -458,7 +483,7 @@ class Trace:
             "handoffs": edge.handoffs,
         }
 
-    def to_graph_dict(self) -> dict:
+    def to_graph_dict(self) -> dict[str, Any]:
         """Serialize to the JSON shape consumed by the D3 renderer.
 
         Acquires the change lock so concurrent SSE readers (the live viewer)
@@ -569,7 +594,7 @@ class TraceHistory:
         with self._cond:
             return list(self.traces.values())
 
-    def to_view_dict(self) -> dict:
+    def to_view_dict(self) -> dict[str, Any]:
         """Serialize all retained traces in newest-first viewer order."""
         return {"traces": [trace.to_graph_dict() for trace in reversed(self.snapshot_traces())]}
 

@@ -186,13 +186,22 @@ examples/pseudo.py  # canonical nested-handoff example
   for render checks. Follow it for new tests.
 - Add or update tests for any recorder/edge/level behavior you change.
 
-## Lint / format (before every commit)
+## Lint / format / type-check (before every commit)
 
 - Format: `uv run ruff format src tests examples` — **don't hand-format**.
-- Check: `uv run ruff check src tests examples` — must be clean. Config in
-  `pyproject.toml` (`select = ["E","F","I","UP","B","SIM"]`, line-length 100).
-- Auto-fix where safe: `uv run ruff check --fix src tests examples`.
-- Commit must pass both `ruff check` and `pytest`.
+- Lint: `uv run ruff check src tests examples` — must be clean. Config in
+  `pyproject.toml` (`select = ["E","F","I","UP","B","SIM"]`, line-length 120).
+  Auto-fix where safe: `uv run ruff check --fix src tests examples`.
+- Type-check: `uv run ty check src` — must be clean. Config in `pyproject.toml`
+  under `[tool.ty]`. `ty` (Astral, beta) is the type checker; pin its version in
+  `[dependency-groups].dev` to control beta churn. Inherent-`Any` diagnostics
+  from the dynamic JSON graph shapes (`dict[str, Any]`) and arbitrary captured
+  values are expected; tune rule severities under `[tool.ty.rules]` if a future
+  `ty` release promotes one to error.
+- Public API must stay fully typed: `@pylier.node` preserves the wrapped
+  callable's signature via PEP 695 `ParamSpec` overloads — don't regress it to
+  `-> Any`. Don't add bare `dict`/`list`/`Token` annotations; parameterize them.
+- Commit must pass `ruff check`, `ty check`, and `pytest`.
 
 ## Code conventions (project standard)
 

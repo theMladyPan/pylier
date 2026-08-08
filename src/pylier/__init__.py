@@ -21,11 +21,12 @@ or a live in-process viewer. API mirrors logfire's flat, decoration-first feel:
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any
+from typing import cast, overload
 
-from pylier.model import Edge, Event, Level, Node, Trace
+from pylier.model import Edge, Event, Invocation, Level, Node, Trace, TraceHistory
 from pylier.recorder import (
     derive_value as _derive_value,
 )
@@ -51,11 +52,14 @@ __all__ = [
     "level",
     "set_level",
     "build_html",
+    "render_to_file",
     "Level",
     "Trace",
+    "TraceHistory",
     "Node",
     "Edge",
     "Event",
+    "Invocation",
     "__version__",
 ]
 
@@ -83,22 +87,52 @@ def derive[T](value: T, *, from_: Iterable[object]) -> T:
     return _derive_value(value, from_=from_)
 
 
-def node(
-    func: Any = None,
+@overload
+def node[**P, R](func: Callable[P, R], /) -> Callable[P, R]: ...
+
+
+@overload
+def node[**P, R](
     *,
     level: Level | str = Level.INFO,
     _tags: Sequence[str] = (),
-) -> Any:
+) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+
+def node[**P, R](
+    func: Callable[P, R] | None = None,
+    *,
+    level: Level | str = Level.INFO,
+    _tags: Sequence[str] = (),
+) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """Decorate a sync or async function/method as a pipeline node.
 
+    The decorated callable keeps its original parameter names, keyword
+    arguments, and return type, so IDE autocompletion and call-site type
+    checks work unchanged.
+
     Args:
+        func: Function or method to instrument (bare ``@pylier.node`` form).
         level: Per-node capture level ("core" | "info" | "debug" | "trace").
             The node is recorded only when the active global level is at least
             this verbose.
         _tags: Logfire-style labels attached to the node for inspection and
             client-side filtering. Inferred edges deliberately have no tags.
     """
-    return _node_decorator(func, level=level, _tags=_tags)
+    # Map to the two documented forms so the overload signatures stay exact:
+    # bare ``@pylier.node`` (defaults) vs. ``@pylier.node(level=..., _tags=...)``.
+    # The cast carries node's own P/R across the delegation boundary — ty can't
+    # unify ParamSpecs across two generic functions, but the overload signatures
+    # above define the exact user-facing type, so this is sound.
+    if func is None:
+        # ty can't unify ParamSpecs across this keyword-only delegation; the
+        # cast carries node's own P/R. The overload signatures above define the
+        # exact user-facing type, so this is sound.
+        return cast(
+            "Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]",
+            _node_decorator(level=level, _tags=_tags),
+        )
+    return _node_decorator(func)
 
 
 @contextlib.contextmanager
@@ -150,7 +184,7 @@ def render(
     return render_to_file(trace, path, embed_payloads=embed_payloads)
 
 
-def set_level(level: Level | str):
+def set_level(level: Level | str) -> AbstractContextManager[None]:
     """Return a context manager temporarily setting the capture level.
 
     Example::

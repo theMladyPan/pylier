@@ -66,12 +66,12 @@ def serialize_value(value: Any, limit: int | None = _VALUE_LIMIT) -> str:
     return text
 
 
-def preview_of(value: Any, limit: int = _PREVIEW_LIMIT) -> str:
+def preview_of(value: Any, limit: int | None = _PREVIEW_LIMIT) -> str:
     try:
         text = repr(value)
     except Exception as exc:  # pragma: no cover - defensive against bad __repr__
         text = f"<unrepresentable: {exc!r}>"
-    if len(text) > limit:
+    if limit is not None and len(text) > limit:
         text = text[: limit - 1] + "…"
     return text
 

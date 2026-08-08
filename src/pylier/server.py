@@ -18,7 +18,7 @@ import json
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, override
 from urllib.parse import unquote
 
 from pylier.model import Trace, TraceHistory
@@ -66,7 +66,7 @@ def serve(trace: Trace | None = None, port: int = 8765, *, open_browser: bool = 
 def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
     captured_trace = trace
 
-    def graph_payload() -> dict:
+    def graph_payload() -> dict[str, Any]:
         if isinstance(captured_trace, TraceHistory):
             return captured_trace.to_view_dict()
         return captured_trace.to_graph_dict()
@@ -75,7 +75,9 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
         # keep SSE handler threads from blocking shutdown
         protocol_version = "HTTP/1.1"
 
-        def log_message(self, fmt: str, *args: Any) -> None:  # silence default logging
+        @override
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - http.server API
+            # silence default request logging
             pass
 
         def _send(self, body: bytes, content_type: str, status: int = HTTPStatus.OK) -> None:
@@ -87,7 +89,7 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self) -> None:  # noqa: N802 - http.server API
+        def do_GET(self) -> None:  # noqa: N802 - http.server convention, not an override
             if self.path in ("/", "/index.html"):
                 initial_trace = (
                     next(iter(captured_trace.traces.values()), Trace())
