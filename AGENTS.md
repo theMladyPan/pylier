@@ -202,9 +202,12 @@ examples/pseudo.py  # canonical nested-handoff example
   - Install/sync deps: `uv sync` (`uv sync --group examples` for runnable web examples)
   - Run anything: `uv run <cmd>` (e.g. `uv run pytest`), never bare `python`
   - Add a dep: `uv add <pkg>` (runtime) or under `[dependency-groups].dev`
-- Python target is **3.14** (`requires-python = ">=3.14"`). PEP 695 type
-  parameters are in use (e.g. `def record_call[T](...)`); don't revert to
-  `TypeVar`/`Union`/`Optional`.
+- Python target is **3.12+** (`requires-python = ">=3.12"`; `target-version = "py312"`
+  for ruff). PEP 695 type parameters are in use (e.g. `def record_call[T](...)`);
+  PEP 695 is supported from 3.12 onward, so backward compatibility to 3.12/3.13
+  requires no architecture change — do not add 3.14-only syntax (e.g. the bare
+  `except A, B:` comma form, reintroduced in 3.14; use parenthesized `except (A, B):`).
+  Don't revert to `TypeVar`/`Union`/`Optional`.
 - Layout is **src/** — imports are `from pylier...`, not `from src.pylier...`.
 
 ## Testing instructions

@@ -238,7 +238,7 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
                         # nothing changed within the heartbeat window: keep alive
                         self.wfile.write(b": heartbeat\n\n")
                         self.wfile.flush()
-            except BrokenPipeError, ConnectionResetError:
+            except (BrokenPipeError, ConnectionResetError):
                 # client closed the tab / navigated away
                 pass
 
