@@ -28,6 +28,7 @@ from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import cast, overload
 
+from pylier.autotrace import autotrace
 from pylier.model import Edge, Event, Invocation, Level, Node, Trace, TraceHistory
 from pylier.recorder import (
     derive_value as _derive_value,
@@ -48,6 +49,7 @@ from pylier.server import serve
 __all__ = [
     "node",
     "derive",
+    "autotrace",
     "trace",
     "render",
     "serve",

@@ -596,6 +596,43 @@ def test_full_invocation_payloads_are_fifo_bounded(monkeypatch):
         reload_settings()
 
 
+def test_decorated_rollback_does_not_copy_accumulated_edge_handoffs(monkeypatch):
+    @pylier.node
+    def echo(value: str) -> str:
+        return value
+
+    class GuardedHandoffs(list[dict[str, object]]):
+        def __deepcopy__(self, memo: dict[int, object]) -> list[dict[str, object]]:
+            raise AssertionError("edge handoffs were deepcopied")
+
+    with pylier.trace("rollback") as trace:
+        assert echo("first") == "first"
+        assert echo("second") == "second"
+
+        edge = next(edge for edge in trace.edges.values() if edge.target.endswith("echo"))
+        edge.handoffs = GuardedHandoffs(edge.handoffs)
+        original_record_event = trace.record_event
+        call_count = 0
+
+        def flaky_record_event(event: pylier.Event) -> None:
+            nonlocal call_count
+            call_count += 1
+            original_record_event(event)
+            if call_count == 1:
+                raise RuntimeError("enter failure")
+
+        monkeypatch.setattr(trace, "record_event", flaky_record_event)
+        with pytest.raises(RuntimeError, match="enter failure"):
+            echo("third")
+        assert echo("fourth") == "fourth"
+
+    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2", f"{trace.id}:3"]
+    edge = next(edge for edge in trace.edges.values() if edge.target.endswith("echo"))
+    assert edge.count == 3
+    assert len(edge.handoffs) == 3
+    assert [event.kind for event in trace.events] == ["enter", "exit", "enter", "exit", "enter", "exit"]
+
+
 def test_value_captured_when_enabled(monkeypatch):
     from pylier.config import get_settings, reload_settings
 

@@ -1,6 +1,6 @@
 [project]
 name = "pylier"
-version = "1.3.2"
+version = "1.4.0"
 description = "Decorator-driven data process & pipeline visualization. Render running code as a force-directed graph."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -54,7 +54,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ty]
 # Astral ty (beta) is the type checker. Run: `uv run ty check src`
-# Python target is inferred from `requires-python` above (>=3.14). Rule
+# Python target is inferred from `requires-python` above (>=3.12). Rule
 # severities use ty defaults; tune per-rule under [tool.ty.rules] if a future
 # ty release promotes an inherent-`Any` (dynamic JSON shapes) diagnostic to error.
 # Pin the dep version in [dependency-groups].dev to control beta churn.

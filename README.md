@@ -12,7 +12,7 @@
 </p>
 
 <p>
-  <a href="https://github.com/theMladyPan/pylier"><img src="https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white" alt="Python 3.14+"></a>
+  <a href="https://github.com/theMladyPan/pylier"><img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="https://github.com/theMladyPan/pylier"><img src="https://img.shields.io/github/stars/theMladyPan/pylier?style=social" alt="pylier GitHub stars"></a>
   <img src="https://img.shields.io/badge/graph%20DSL-none-2ea44f" alt="No graph DSL">
   <img src="https://img.shields.io/badge/tracing%20framework-none-2ea44f" alt="No tracing framework">
@@ -162,6 +162,47 @@ with pylier.trace("document-ingest"):
 pylier.render("document-ingest.html")  # interactive, standalone HTML
 ```
 
+## Autotrace without decorators
+
+```python
+import pylier
+import myapp.pipeline
+
+
+pylier.autotrace()  # infers the caller's package or source root
+
+with pylier.trace("request"):
+    myapp.pipeline.run()
+```
+
+Limit it explicitly when your app spans multiple entry points:
+
+```python
+pylier.autotrace(
+    modules=["myapp.pipeline", "myapp.services"],
+    allow_empty=False,
+    min_exec_time=0.050,
+)
+```
+
+- Autotrace covers public Python-defined functions, methods, coroutines,
+  generators, and async generators inside the selected scope.
+- `modules=[...]` matches exact module names and their submodules.
+- `min_exec_time` is measured in seconds. A positive threshold omits warm-up
+  calls until one qualifying call promotes that code object; the first
+  qualifying call is still omitted.
+- `allow_empty=False` buffers successful calls with no meaningful business
+  input that return `None` and drops only the empty parent. For autotrace,
+  parameters whose runtime value equals their declared default are treated as
+  omitted for this filter; use `allow_empty=True` if you need those calls
+  retained. Its committed children reconnect to the nearest retained caller or
+  trace root when the call finishes.
+- Names starting with `_`, lambdas/comprehensions, module/class bodies,
+  C callables, and code outside the selected scope are skipped.
+- An explicit `@pylier.node` wins; autotrace will not double-record it.
+- `pylier.autotrace()` requires Python 3.12+ with `sys.monitoring` available
+  at runtime.
+
 ## Notes
 
 For a plain-Python transformation or join that loses value provenance, preserve
@@ -196,10 +237,10 @@ branch lineage visible in the next decorated stage. See
 
 pylier has no OpenTelemetry or other tracer dependency. It records
 its own local decorator traces and does not mutate ambient tracing context, so
-another tracer can instrument the same process independently. The only runtime
-dependency is `pydantic-settings` for configuration. pylier ships a `py.typed`
-marker and full PEP 695 type annotations, so IDE autocompletion and type checkers
-work out of the box.
+another tracer can instrument the same process independently. Autotrace uses
+stdlib `sys.monitoring`, so it adds no dependency beyond `pydantic-settings`
+for configuration. pylier ships a `py.typed` marker and full PEP 695 type
+annotations, so IDE autocompletion and type checkers work out of the box.
 
 ## Development
 
