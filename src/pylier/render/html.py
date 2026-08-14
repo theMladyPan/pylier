@@ -48,7 +48,7 @@ def build_html(
     """
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     graph = history.to_view_dict() if history is not None else trace.to_graph_dict()
-    data_json = json.dumps(graph, default=str, ensure_ascii=False)
+    data_json = _inline_json(graph)
     payload_json = _inline_json(_payload_bundle(trace, history) if embed_payloads else {})
     html = (
         template.replace(_DATA_TOKEN, data_json)
@@ -96,16 +96,21 @@ def _payload_bundle(trace: Trace, history: Any | None) -> dict[str, dict[str, st
 
 
 def _inline_json(value: object) -> str:
-    """Encode JSON safely for insertion into an inline script."""
-    return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    """Encode JSON safely for insertion into an inline script.
+
+    ``\\u003c``/``\\u003e`` are legal JSON escapes (JSON.parse restores the
+    originals), so a trace name or metadata value containing ``</script>``
+    can never break out of the surrounding script tag.
+    """
+    return (
+        json.dumps(value, default=str, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
 
 
 def _escape(text: str) -> str:
     import html as _html
 
     return _html.escape(text, quote=False)
-
-
-def graph_dict(trace: Trace) -> dict[str, Any]:
-    """Expose the renderer's JSON shape (used by the live server's poll API)."""
-    return trace.to_graph_dict()

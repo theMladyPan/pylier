@@ -13,17 +13,19 @@ import math
 import re
 import sys
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import CodeType, FrameType
 from typing import Any, Literal
 
-from pylier.model import Event, Invocation, Level, Node, Trace
+from pylier.config import get_settings
+from pylier.model import PHASE_ARGUMENTS, Event, Invocation, Level, Node, Trace
 from pylier.recorder import (
     InvocationFrame,
     NodeMeta,
     _record_enter_arguments,
+    _sink_event,
     current_execution_stack,
     current_level,
     current_trace,
@@ -40,7 +42,6 @@ from pylier.recorder import (
 __all__ = ["autotrace"]
 
 _MODULE_NAME_RE = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
-_EVENT_NAMES = ("PY_START", "PY_RESUME", "PY_THROW", "PY_RETURN", "PY_YIELD", "PY_UNWIND")
 _CAPTURE_MODE = Literal["warmup", "direct", "buffered"]
 
 
@@ -142,7 +143,7 @@ def autotrace(
     runtime = _RuntimeState(tool_id=tool_id, config=config)
     try:
         mask = 0
-        for event_name, callback in _callbacks().items():
+        for event_name, callback in _CALLBACKS.items():
             event = getattr(monitoring.events, event_name)
             monitoring.register_callback(tool_id, event, callback)
             mask |= event
@@ -181,11 +182,9 @@ def _normalize_min_exec_time(value: float | None) -> float:
     if isinstance(value, bool):
         raise TypeError("min_exec_time must be a float or None")
     seconds = float(value)
-    if not math.isfinite(seconds) or math.isnan(seconds):
-        raise ValueError("min_exec_time must be finite")
-    if seconds < 0:
-        raise ValueError("min_exec_time must be >= 0")
-    return 0.0 if seconds == 0 else seconds
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError("min_exec_time must be a finite number >= 0")
+    return seconds
 
 
 def _normalize_scope(modules: str | Sequence[str] | None, caller_frame: FrameType) -> _Scope:
@@ -322,17 +321,6 @@ def _is_business_yield(frame_state: _FrameState, value: object) -> bool:
     if frame_state.code_flags & inspect.CO_ASYNC_GENERATOR:
         return type(value).__name__ == "async_generator_wrapped_value"
     return bool(frame_state.code_flags & inspect.CO_GENERATOR)
-
-
-def _callbacks() -> dict[str, Any]:
-    return {
-        "PY_START": _handle_py_start,
-        "PY_RESUME": _handle_py_resume,
-        "PY_THROW": _handle_py_throw,
-        "PY_RETURN": _handle_py_return,
-        "PY_YIELD": _handle_py_yield,
-        "PY_UNWIND": _handle_py_unwind,
-    }
 
 
 def _handle_py_start(code: CodeType, _instruction_offset: int) -> None:
@@ -553,12 +541,8 @@ def _should_trace_frame(frame: FrameType, config: _Config) -> bool:
     filename = code.co_filename
     if not filename or filename.startswith("<"):
         return False
-    return _is_within(Path(filename).resolve(), config.scope.source_root)
-
-
-def _is_within(path: Path, root: Path) -> bool:
     try:
-        path.relative_to(root)
+        Path(filename).resolve().relative_to(config.scope.source_root)
         return True
     except ValueError:
         return False
@@ -598,6 +582,19 @@ def _reserve_tool_id(monitoring: Any) -> int:
             monitoring.use_tool_id(tool_id, "pylier.autotrace")
             return tool_id
     raise RuntimeError("pylier.autotrace could not reserve a free sys.monitoring tool ID")
+
+
+# Defined after the handlers; ``_EVENT_NAMES`` is derived so a rename updates
+# one place (used by ``_disable_runtime`` for callback deregistration).
+_CALLBACKS: dict[str, Callable[..., None]] = {
+    "PY_START": _handle_py_start,
+    "PY_RESUME": _handle_py_resume,
+    "PY_THROW": _handle_py_throw,
+    "PY_RETURN": _handle_py_return,
+    "PY_YIELD": _handle_py_yield,
+    "PY_UNWIND": _handle_py_unwind,
+}
+_EVENT_NAMES = tuple(_CALLBACKS)
 
 
 def _disable_runtime(monitoring: Any, tool_id: int) -> None:
@@ -667,7 +664,7 @@ def _merge_buffered_trace(
                 anchor_invocation_id,
             )
             if omitted_ids and handoff.get("parent_invocation_id") in omitted_ids:
-                if edge.metadata.get("phase") == "arguments":
+                if edge.metadata.get("phase") == PHASE_ARGUMENTS:
                     source = anchor_node_id
                 else:
                     target = anchor_node_id
@@ -778,25 +775,18 @@ def _translate_parent_invocation_id(
 def _store_invocation(
     target_trace: Trace, invocation: Invocation, new_id: str, parent_invocation_id: str | None
 ) -> None:
+    # The staged trace is discarded post-merge, so aliasing its field values
+    # (replace keeps references) is safe; the arguments list is copied anyway.
     with target_trace._cond:
-        target_trace.invocations[new_id] = Invocation(
+        target_trace.invocations[new_id] = replace(
+            invocation,
             id=new_id,
-            node_id=invocation.node_id,
             parent_invocation_id=parent_invocation_id,
             arguments=list(invocation.arguments),
-            started_at=invocation.started_at,
-            duration_ms=invocation.duration_ms,
-            result_type=invocation.result_type,
-            result_size=invocation.result_size,
-            result_preview=invocation.result_preview,
-            exception=invocation.exception,
-            payload_state=invocation.payload_state,
         )
 
 
 def _merge_payloads(target_trace: Trace, staged_trace: Trace, invocation_id_map: dict[str, str]) -> None:
-    from pylier.config import get_settings
-
     settings = get_settings()
     for staged_invocation_id, new_invocation_id in invocation_id_map.items():
         state, payload = staged_trace.invocation_payload(staged_invocation_id)
@@ -830,36 +820,17 @@ def _emit_buffered_sinks(
         node = target_trace.nodes.get(event.node_id)
         if invocation is None or node is None:
             continue
-        sink_event = {
-            "ts": event.ts,
-            "node_id": node.id,
-            "name": node.name,
-            "module": node.module,
-            "level": int(current_level()),
-            "tags": list(node.tags),
-            "return_type": invocation.result_type,
-            "result_preview": invocation.result_preview,
-            "edges": [_edge_payload(edge) for edge in target_trace.edges.values() if edge.target == node.id],
-            "data_edges": [_edge_payload(edge) for edge in target_trace.data_edges.values() if edge.target == node.id],
-        }
+        sink_event = _sink_event(
+            node=node,
+            trace=target_trace,
+            level=current_level(),
+            ts=event.ts,
+            return_type=invocation.result_type,
+            result_preview=invocation.result_preview,
+        )
         for sink in target_trace.sinks:
             with contextlib.suppress(Exception):
                 sink(sink_event)
-
-
-def _edge_payload(edge: Any) -> dict[str, Any]:
-    return {
-        "source": edge.source,
-        "target": edge.target,
-        "payload": edge.payload_type,
-        "size": edge.size,
-        "preview": edge.preview,
-        "payload_types": list(edge.payload_types),
-        "count": edge.count,
-        "value": edge.value,
-        "metadata": edge.metadata,
-        "handoffs": edge.handoffs,
-    }
 
 
 def _reset_for_tests() -> None:

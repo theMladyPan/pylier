@@ -67,7 +67,7 @@
     font-family: var(--mono);
     display: flex; flex-direction: column;
   }
-  /* monospace dark header with breadcrumbs + run metadata + theme toggle */
+  /* monospace dark header with run metadata + theme toggle */
   #header {
     height: 56px; padding: 0 18px; border-bottom: 1px solid var(--panel-border);
     display: flex; align-items: center; gap: 12px; background: var(--panel-2);
@@ -110,9 +110,7 @@
   #traces { border-right: 1px solid var(--panel-border); }
   #main.left-collapsed #traces { overflow: hidden; }
   #main.left-collapsed #traces .pane-head { height: 100%; padding: 8px 0; justify-content: center; align-items: flex-start; }
-  #main.left-collapsed #traces .pane-head h2,
-  #main.left-collapsed #traces #selector-traces,
-  #main.left-collapsed #traces #filters { display: none; }
+  #main.left-collapsed #traces .pane-head h2 { display: none; }
   #main.left-collapsed #traces #b-left { color: var(--text); font-size: 16px; padding: 5px 8px; }
   #main.left-collapsed #traces #b-left:hover { color: var(--accent); }
   #filters { border-top: 1px solid var(--panel-border); }
@@ -244,8 +242,6 @@
   .node rect.body { fill: var(--card); stroke: var(--node-stroke); stroke-width: 1; }
   .node:hover rect.body { stroke: var(--accent); stroke-width: 1.5; }
   .node rect.status { stroke: none; }
-  .node.fastapi rect.body { stroke: var(--accent); stroke-width: 1.5; }
-  .node.otel rect.body { stroke: var(--type-tuple); stroke-width: 1.5; }
   .node .boundary-port { fill: var(--panel-bg); stroke: var(--accent); stroke-width: 2; }
   .node:hover .boundary-port { fill: color-mix(in srgb, var(--accent) 14%, var(--panel-bg)); stroke-width: 2.5; }
   .node text { pointer-events: none; font-family: var(--mono); }
@@ -461,9 +457,11 @@ function loadData() {
   selectedTraceId = selected.id;
   return selected;
 }
-function formatTraceStart(timestamp) {
-  if (typeof timestamp !== "number") return "—";
-  return new Date(timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+function formatTimestamp(ts, mode) {
+  if (typeof ts !== "number") return "—";
+  const date = new Date(ts * 1000);
+  if (mode === "short") return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  return date.toLocaleString();
 }
 function renderTraceHistory() {
   const traces = loadView().traces;
@@ -475,7 +473,7 @@ function renderTraceHistory() {
     entry.title = typeof trace.started_at === "number" ? new Date(trace.started_at * 1000).toLocaleString() : "";
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = `${trace.nodes.length} nodes · ${formatTraceStart(trace.started_at)}`;
+    meta.textContent = `${trace.nodes.length} nodes · ${formatTimestamp(trace.started_at, "short")}`;
     entry.append(meta);
     entry.addEventListener("click", () => { selectedTraceId = trace.id; active.clear(); state.selected = null; update(); });
     return entry;
@@ -489,8 +487,6 @@ const LIVE = __PYLIER_LIVE__;
 const EMBEDDED_PAYLOADS = __PYLIER_INVOCATION_PAYLOADS__;
 const SSE_LOG_LIMIT = 100;
 const sseLog = [];
-const pendingSseLog = [];
-let sseLogFlushScheduled = false;
 
 function formatSseTime(date) {
   return date.toLocaleTimeString([], { hour12: false }) + `.${String(date.getMilliseconds()).padStart(3, "0")}`;
@@ -543,18 +539,6 @@ function renderSseLog() {
   log.scrollTop = log.scrollHeight;
 }
 
-function flushSseLog() {
-  sseLogFlushScheduled = false;
-  if (!pendingSseLog.length) return;
-  const log = document.getElementById("event-log");
-  log.querySelector(".console-empty")?.remove();
-  const fragment = document.createDocumentFragment();
-  for (const entry of pendingSseLog.splice(0)) fragment.append(consoleLine(entry));
-  log.append(fragment);
-  while (log.children.length > sseLog.length) log.firstElementChild?.remove();
-  log.scrollTop = log.scrollHeight;
-}
-
 function logSseEvent(kind, payload) {
   const entry = {
     time: formatSseTime(new Date()),
@@ -563,12 +547,8 @@ function logSseEvent(kind, payload) {
     raw: JSON.stringify(payload, null, 2),
   };
   sseLog.push(entry);
-  pendingSseLog.push(entry);
   if (sseLog.length > SSE_LOG_LIMIT) sseLog.shift();
-  if (!sseLogFlushScheduled) {
-    sseLogFlushScheduled = true;
-    requestAnimationFrame(flushSseLog);
-  }
+  requestAnimationFrame(renderSseLog);
 }
 
 let liveData = null;
@@ -590,7 +570,7 @@ if (LIVE) {
   es.onerror = () => { es.close(); };
 }
 
-let state = { showLabels: true, animate: true, showFramework: false, edgeMode: "rectilinear", perspective: "application", selected: null, tagFilter: new Set(), tagMode: "any" };
+let state = { showLabels: true, animate: true, edgeMode: "rectilinear", perspective: "application", selected: null, tagFilter: new Set(), tagMode: "any" };
 function perspectiveLinks(data) {
   return data.perspectives?.[state.perspective]?.links || data.links || [];
 }
@@ -737,8 +717,7 @@ function update() {
   d3.select("#h-dur").text(totalMs ? `${(totalMs / 1000).toFixed(2)} s total` : "");
   const stamp = d3.select("#h-stamp");
   stamp.classed("live", !!LIVE).classed("done", !LIVE).text(LIVE ? "live" : "completed");
-  const tid = runId(data);
-  d3.select("#s-trace").text(tid);
+  d3.select("#s-trace").text(data.id.slice(0, 8));
 
   const prevById = new Map(nodeData.map(n => [n.id, n]));
   const prevNodeIds = new Set(prevById.keys());
@@ -1066,9 +1045,8 @@ function clearHighlight() {
   if (nodeSel) nodeSel.classed("dimmed", false);
   if (linkSel) linkSel.classed("highlighted", false).classed("dimmed", false);
 }
-
-function formatTraceTimeDetails(timestamp) {
-  return typeof timestamp === "number" ? new Date(timestamp * 1000).toLocaleString() : "—";
+function resetDetails() {
+  d3.select("#details").html('<h2>Details</h2><div class="empty">Click a node or edge to inspect.</div>');
 }
 function appendDetailRow(details, key, value) {
   const row = details.append("div").attr("class", "drow");
@@ -1081,12 +1059,12 @@ function renderTraceBoundaryDetails() {
   details.html("");
   details.append("h2").text("Trace boundary");
   appendDetailRow(details, "name", trace.name || "trace");
-  appendDetailRow(details, "started", formatTraceTimeDetails(trace.started_at));
-  if (trace.ended_at != null) appendDetailRow(details, "ended", formatTraceTimeDetails(trace.ended_at));
+  appendDetailRow(details, "started", formatTimestamp(trace.started_at, "full"));
+  if (trace.ended_at != null) appendDetailRow(details, "ended", formatTimestamp(trace.ended_at, "full"));
   const metadata = trace.metadata || {};
   const entries = Object.entries(metadata).sort(([left], [right]) => left.localeCompare(right));
   if (!entries.length) return;
-  details.append("h2").attr("class", "details-subheading").text("Metadata");
+  details.append("h2").text("Metadata");
   entries.forEach(([key, value]) => appendDetailRow(details, key, String(value)));
 }
 function renderDetails(d) {
@@ -1197,7 +1175,7 @@ async function expandInvocation(body, invocationId, payloadField) {
 }
 
 function appendInvocationPayloadToggle(container, invocation, label, payloadField) {
-  const section = container.append("section").attr("class", "io-section");
+  const section = container.append("section");
   const toggle = section.append("button").attr("type", "button").attr("class", "io-toggle");
   toggle.append("span").attr("class", "chevron").text("▶");
   toggle.append("span").text(label);
@@ -1301,13 +1279,6 @@ function renderEdgeDetails(l) {
   }
 }
 
-function runId(data) {
-  const seed = `${data.name || ""}|${(data.nodes || []).length}|${(data.links || []).length}`;
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return h.toString(16).slice(0, 6);
-}
-
 function fit() {
   const bbox = root.node().getBBox();
   if (!isFinite(bbox.width) || !bbox.width) return;
@@ -1320,15 +1291,12 @@ function fit() {
 function setEdgeMode(mode, persist = true) {
   state.edgeMode = mode === "direct" ? "direct" : "rectilinear";
   d3.selectAll('input[name="edge-mode"]').property("checked", function () { return this.value === state.edgeMode; });
-  if (persist) try { localStorage.setItem("pylier-edge-mode", state.edgeMode); } catch { /* private mode */ }
+  if (persist) store.set("pylier-edge-mode", state.edgeMode);
   redrawEdges();
 }
 
 d3.select("#b-fit").on("click", () => setTimeout(fit, 600));
-d3.select("#b-reset").on("click", () => {
-  state.selected = null; clearHighlight();
-  d3.select("#details").html('<h2>Details</h2><div class="empty">Click a node or edge to inspect.</div>');
-});
+d3.select("#b-reset").on("click", () => { state.selected = null; clearHighlight(); resetDetails(); });
 d3.select("#c-labels").on("change", e => { state.showLabels = e.target.checked; if (labelSel) labelSel.style("display", e.target.checked ? null : "none"); });
 d3.select("#c-anim").on("change", e => { state.animate = e.target.checked; });
 d3.selectAll('input[name="edge-mode"]').on("change", e => setEdgeMode(e.target.value));
@@ -1355,7 +1323,7 @@ function resizeGraph() {
 function setSectionCollapsed(element, button, collapsed, persistKey, persist = true) {
   element.classList.toggle("section-collapsed", collapsed);
   button.textContent = collapsed ? "⌄" : "⌃";
-  if (persist) try { localStorage.setItem(persistKey, String(collapsed)); } catch { /* private mode */ }
+  if (persist) store.set(persistKey, String(collapsed));
 }
 function setLeftCollapsed(collapsed, persist = true) {
   main.classList.toggle("left-collapsed", collapsed);
@@ -1363,27 +1331,27 @@ function setLeftCollapsed(collapsed, persist = true) {
   button.textContent = collapsed ? "›" : "‹";
   button.title = collapsed ? "Show selectors" : "Collapse selectors";
   button.setAttribute("aria-label", button.title);
-  if (persist) try { localStorage.setItem("pylier-left-collapsed", String(collapsed)); } catch { /* private mode */ }
+  if (persist) store.set("pylier-left-collapsed", String(collapsed));
   setTimeout(resizeGraph, 0);
 }
 function setSidebarCollapsed(collapsed, persist = true) {
   main.classList.toggle("sidebar-collapsed", collapsed);
   sidebar.classList.toggle("sidebar-collapsed", collapsed);
   document.getElementById("b-sidebar").textContent = collapsed ? "‹" : "›";
-  if (persist) try { localStorage.setItem("pylier-sidebar-collapsed", String(collapsed)); } catch { /* private mode */ }
+  if (persist) store.set("pylier-sidebar-collapsed", String(collapsed));
   setTimeout(resizeGraph, 0);
 }
 function setSidebarWidth(width, persist = true) {
   const bounded = Math.max(240, Math.min(560, width));
   main.style.setProperty("--sidebar-w", `${bounded}px`);
-  if (persist) try { localStorage.setItem("pylier-sidebar-width", String(bounded)); } catch { /* private mode */ }
+  if (persist) store.set("pylier-sidebar-width", String(bounded));
   resizeGraph();
 }
 function setConsoleHeight(height, persist = true) {
   const maxHeight = Math.max(110, footer.parentElement.clientHeight - 100);
   const bounded = Math.max(110, Math.min(maxHeight, height));
   footer.style.flexBasis = `${bounded}px`;
-  if (persist) try { localStorage.setItem("pylier-console-height", String(bounded)); } catch { /* private mode */ }
+  if (persist) store.set("pylier-console-height", String(bounded));
   resizeGraph();
 }
 function setConsoleCollapsed(collapsed, persist = true) {
@@ -1396,7 +1364,7 @@ function setConsoleCollapsed(collapsed, persist = true) {
   eventConsole.hidden = collapsed;
   consoleToggle.setAttribute("aria-expanded", String(!collapsed));
   consoleToggle.textContent = collapsed ? "SSE console ▲" : "SSE console ▼";
-  if (persist) try { localStorage.setItem("pylier-console-collapsed", String(collapsed)); } catch { /* private mode */ }
+  if (persist) store.set("pylier-console-collapsed", String(collapsed));
   setTimeout(resizeGraph, 0);
 }
 d3.select("#b-left").on("click", () => setLeftCollapsed(!main.classList.contains("left-collapsed")));
@@ -1404,7 +1372,7 @@ d3.select("#b-traces").on("click", () => setSectionCollapsed(document.getElement
 d3.select("#b-filters").on("click", () => setSectionCollapsed(filters, document.getElementById("b-filters"), !filters.classList.contains("section-collapsed"), "pylier-filters-collapsed"));
 d3.select("#b-sidebar").on("click", () => setSidebarCollapsed(!sidebar.classList.contains("sidebar-collapsed")));
 d3.select("#b-console").on("click", () => setConsoleCollapsed(!eventConsole.hidden));
-d3.select("#b-console-clear").on("click", () => { sseLog.length = 0; pendingSseLog.length = 0; renderSseLog(); });
+d3.select("#b-console-clear").on("click", () => { sseLog.length = 0; renderSseLog(); });
 const consoleResizeHandle = document.getElementById("console-resize");
 consoleResizeHandle.addEventListener("pointerdown", event => {
   event.preventDefault();
@@ -1416,7 +1384,7 @@ consoleResizeHandle.addEventListener("pointerdown", event => {
   };
   const end = () => {
     consoleResizeHandle.classList.remove("dragging");
-    try { localStorage.setItem("pylier-console-height", String(footer.offsetHeight)); } catch { /* private mode */ }
+    store.set("pylier-console-height", String(footer.offsetHeight));
     consoleResizeHandle.removeEventListener("pointermove", move);
     consoleResizeHandle.removeEventListener("pointerup", end);
   };
@@ -1431,7 +1399,7 @@ resizeHandle.addEventListener("pointerdown", event => {
   const move = pointerEvent => setSidebarWidth(window.innerWidth - pointerEvent.clientX, false);
   const end = () => {
     resizeHandle.classList.remove("dragging");
-    try { localStorage.setItem("pylier-sidebar-width", String(parseInt(getComputedStyle(main).getPropertyValue("--sidebar-w"), 10))); } catch { /* private mode */ }
+    store.set("pylier-sidebar-width", String(parseInt(getComputedStyle(main).getPropertyValue("--sidebar-w"), 10)));
     resizeHandle.removeEventListener("pointermove", move);
     resizeHandle.removeEventListener("pointerup", end);
   };
@@ -1448,25 +1416,21 @@ function applyTheme(t) {
     .attr("marker-end", d => `url(#arrow-${d.metadata?.phase === "exception" ? "exception" : payloadCategory(d.payload)})`)
     .style("stroke", edgeStroke);
 }
-const savedTheme = (() => { try { return localStorage.getItem("pylier-theme") || "dark"; } catch { return "dark"; } })();
-const savedEdgeMode = (() => { try { return localStorage.getItem("pylier-edge-mode") || "rectilinear"; } catch { return "rectilinear"; } })();
-const savedSidebarWidth = (() => {
-  try {
-    const stored = localStorage.getItem("pylier-sidebar-width");
-    return stored === null ? NaN : Number(stored);
-  } catch { return NaN; }
-})();
-const savedLeftCollapsed = (() => { try { return localStorage.getItem("pylier-left-collapsed") === "true"; } catch { return false; } })();
-const savedTracesCollapsed = (() => { try { return localStorage.getItem("pylier-traces-collapsed") === "true"; } catch { return false; } })();
-const savedFiltersCollapsed = (() => { try { return localStorage.getItem("pylier-filters-collapsed") === "true"; } catch { return false; } })();
-const savedSidebarCollapsed = (() => { try { return localStorage.getItem("pylier-sidebar-collapsed") === "true"; } catch { return false; } })();
-const savedConsoleCollapsed = (() => { try { return localStorage.getItem("pylier-console-collapsed") !== "false"; } catch { return true; } })();
-const savedConsoleHeight = (() => {
-  try {
-    const stored = localStorage.getItem("pylier-console-height");
-    return stored === null ? NaN : Number(stored);
-  } catch { return NaN; }
-})();
+// localStorage is best-effort persistence: private-mode browsers throw, so
+// every read/write goes through store.get/store.set and silently degrades.
+const store = {
+  get: (k, fb) => { try { const v = localStorage.getItem(k); return v !== null ? v : fb; } catch { return fb; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+};
+const savedTheme = store.get("pylier-theme", "dark");
+const savedEdgeMode = store.get("pylier-edge-mode", "rectilinear");
+const savedSidebarWidth = Number(store.get("pylier-sidebar-width", NaN));
+const savedLeftCollapsed = store.get("pylier-left-collapsed", null) === "true";
+const savedTracesCollapsed = store.get("pylier-traces-collapsed", null) === "true";
+const savedFiltersCollapsed = store.get("pylier-filters-collapsed", null) === "true";
+const savedSidebarCollapsed = store.get("pylier-sidebar-collapsed", null) === "true";
+const savedConsoleCollapsed = store.get("pylier-console-collapsed", null) !== "false";
+const savedConsoleHeight = Number(store.get("pylier-console-height", NaN));
 if (Number.isFinite(savedSidebarWidth)) setSidebarWidth(savedSidebarWidth, false);
 setEdgeMode(savedEdgeMode, false);
 setLeftCollapsed(savedLeftCollapsed, false);
@@ -1480,7 +1444,7 @@ d3.select("#b-theme").on("click", () => {
   const cur = document.documentElement.getAttribute("data-theme") || "dark";
   const nxt = cur === "dark" ? "light" : "dark";
   applyTheme(nxt);
-  try { localStorage.setItem("pylier-theme", nxt); } catch { /* private mode */ }
+  store.set("pylier-theme", nxt);
 });
 
 window.addEventListener("resize", resizeGraph);

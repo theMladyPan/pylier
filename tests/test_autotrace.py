@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 import pylier
+from pylier.model import PHASE_EXCEPTION
 
 
 def _load_autotrace_module():
@@ -370,7 +371,7 @@ def test_autotrace_matches_decorated_sync_application_and_data_flow(module_facto
     assert _application_pairs(auto_trace) == _application_pairs(decorated_trace)
     assert _data_pairs(auto_trace) == _data_pairs(decorated_trace)
     exception_edge = next(edge for edge in auto_trace.edges.values() if edge.payload_type == "exception")
-    assert exception_edge.metadata["phase"] == "exception"
+    assert exception_edge.metadata["phase"] == PHASE_EXCEPTION
 
 
 def test_autotrace_respects_global_level_gating(module_factory):
@@ -509,7 +510,9 @@ def test_autotrace_captures_values_and_sidecar_output_through_existing_recorder_
         reload_settings()
 
 
-def test_autotrace_rollback_does_not_copy_accumulated_edge_handoffs(module_factory, monkeypatch: pytest.MonkeyPatch):
+def test_autotrace_enter_failure_does_not_copy_accumulated_edge_handoffs(
+    module_factory, monkeypatch: pytest.MonkeyPatch
+):
     modules = module_factory(
         {
             "deepcopyapp/__init__.py": "",
@@ -547,10 +550,13 @@ def test_autotrace_rollback_does_not_copy_accumulated_edge_handoffs(module_facto
         assert mod.echo("third") == "third"
         assert mod.echo("fourth") == "fourth"
 
-    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2", f"{trace.id}:3"]
+    # sys.monitoring swallows the enter failure, so the third call runs
+    # untraced but leaves a partial invocation behind (no rollback by design);
+    # the fourth call must still resolve its caller correctly.
+    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2", f"{trace.id}:3", f"{trace.id}:4"]
     edge = next(edge for edge in trace.edges.values() if edge.target.endswith("echo"))
-    assert edge.count == 3
-    assert len(edge.handoffs) == 3
+    assert edge.count == 4
+    assert len(edge.handoffs) == 4
     _assert_valid_trace_references(trace)
 
 
@@ -946,7 +952,9 @@ def test_autotrace_resume_keeps_async_generator_trace_isolation_across_traces(mo
     _assert_valid_trace_references(foreign_trace)
 
 
-def test_autotrace_start_callback_failure_rolls_back_partial_mutation(module_factory, monkeypatch: pytest.MonkeyPatch):
+def test_autotrace_start_callback_failure_leaves_partial_invocation_without_corrupting_trace(
+    module_factory, monkeypatch: pytest.MonkeyPatch
+):
     modules = module_factory(
         {
             "startfailapp/__init__.py": "",
@@ -975,8 +983,11 @@ def test_autotrace_start_callback_failure_rolls_back_partial_mutation(module_fac
         assert mod.work() == "ok"
         assert mod.work() == "ok"
 
+    # The first enter failure is swallowed by the monitoring callback; its
+    # partial mutation (node + invocation) stays by design. The second call
+    # records normally and must resolve the root as its caller.
     assert _node_names(trace) == {"work"}
-    assert list(trace.invocations) == [f"{trace.id}:1"]
-    assert [event.kind for event in trace.events] == ["enter", "exit"]
-    assert next(iter(trace.nodes.values())).calls == 1
+    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2"]
+    assert [event.kind for event in trace.events] == ["enter", "enter", "exit"]
+    assert next(iter(trace.nodes.values())).calls == 2
     _assert_valid_trace_references(trace)

@@ -12,6 +12,7 @@ import pytest
 
 import pylier
 from pylier.model import Level, Node, Trace
+from pylier.render import build_html
 
 
 def test_trace_root_captures_nested_argument_and_return_handoffs(monkeypatch):
@@ -433,7 +434,7 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert 'id="event-console"' in html
     assert "SSE_LOG_LIMIT = 100" in html
     assert "logSseEvent" in html
-    assert "requestAnimationFrame(flushSseLog)" in html
+    assert "requestAnimationFrame(renderSseLog)" in html
     assert "pylier-console-collapsed" in html
     assert 'class="foot-note"' not in html
     assert "payload_kind" not in html
@@ -596,7 +597,7 @@ def test_full_invocation_payloads_are_fifo_bounded(monkeypatch):
         reload_settings()
 
 
-def test_decorated_rollback_does_not_copy_accumulated_edge_handoffs(monkeypatch):
+def test_decorated_enter_failure_does_not_copy_accumulated_edge_handoffs(monkeypatch):
     @pylier.node
     def echo(value: str) -> str:
         return value
@@ -626,11 +627,16 @@ def test_decorated_rollback_does_not_copy_accumulated_edge_handoffs(monkeypatch)
             echo("third")
         assert echo("fourth") == "fourth"
 
-    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2", f"{trace.id}:3"]
+    # The old enter rollback removed a partially recorded call; by design it is
+    # gone, so the failed third call stays (node + invocation + argument
+    # handoff). What must NOT happen: the failure deep-copies accumulated
+    # handoffs or strands a frame on the execution stack — that would corrupt
+    # the fourth call's caller resolution.
+    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2", f"{trace.id}:3", f"{trace.id}:4"]
     edge = next(edge for edge in trace.edges.values() if edge.target.endswith("echo"))
-    assert edge.count == 3
-    assert len(edge.handoffs) == 3
-    assert [event.kind for event in trace.events] == ["enter", "exit", "enter", "exit", "enter", "exit"]
+    assert edge.count == 4
+    assert len(edge.handoffs) == 4
+    assert [event.kind for event in trace.events] == ["enter", "exit", "enter", "exit", "enter", "enter", "exit"]
 
 
 def test_value_captured_when_enabled(monkeypatch):
@@ -798,7 +804,7 @@ def test_trace_serializes_generic_metadata_and_lifecycle():
 
 def test_render_template_uses_boundary_port_without_workspace_tabs():
     """The renderer keeps trace boundaries distinct from algorithm node cards."""
-    html = pylier.build_html(Trace("boundary"))
+    html = build_html(Trace("boundary"))
 
     assert 'id="endpoint-bar"' not in html
     assert 'attr("class", "boundary-port")' in html
