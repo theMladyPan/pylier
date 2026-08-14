@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-08-13
+
+### Fixed
+
+- Static HTML render escaped the payload bundle against `</script>` injection
+  but inserted graph JSON raw, so a trace name or metadata value containing
+  `</script>` broke every artifact. Graph JSON now uses the same escaping.
+- Recorder enter now pushes its execution frame as the last caller-visible
+  mutation, so an artificial failure mid-enter can no longer strand a frame on
+  the context's execution stack.
+
+### Changed
+
+- Internal cleanup (no API change): collapsed triplicated edge serialization to
+  a single `Trace._edge_dict`, removed the enter-rollback snapshots in favor of
+  fallible-first ordering, merged the duplicated SSE graph/exec emit branches,
+  replaced the SSE console dual-buffer with a single array + rAF, deduplicated
+  localStorage persistence behind `store` helpers, and removed dead config
+  knobs (`preview_limit`, `value_limit`, `server_port`), dead CSS, and the
+  vestigial `GET /graph` debug endpoint.
+- `Edge.metadata["phase"]` literals are now sourced from `model.PHASE_ARGUMENTS`,
+  `PHASE_EXCEPTION`, and `PHASE_RETURN` constants instead of ad-hoc strings.
+- `SidecarBackend` now requires an explicit `sidecar_name` (callers always pass
+  one).
+
 ## [1.4.0] - 2026-08-13
 
 ### Added
