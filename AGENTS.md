@@ -227,6 +227,13 @@ examples/pseudo.py  # canonical nested-handoff example
   - Install/sync deps: `uv sync` (`uv sync --group examples` for runnable web examples)
   - Run anything: `uv run <cmd>` (e.g. `uv run pytest`), never bare `python`
   - Add a dep: `uv add <pkg>` (runtime) or under `[dependency-groups].dev`
+  - **`uv.lock` is committed and CI runs `uv run --locked`** (publish.yml) and
+    `uv sync --locked` (pages.yml). Any change to `pyproject.toml` — including a
+    `[project].version` bump — MUST be followed by `uv lock` and the lockfile
+    committed in the same change. A stale lockfile fails CI with
+    `error: The lockfile ... needs to be updated`. Verify before pushing with
+    `uv lock --check` (fast, no install) or the exact CI gate
+    `uv run --locked pytest`.
 - Python target is **3.12+** (`requires-python = ">=3.12"`; `target-version = "py312"`
   for ruff). PEP 695 type parameters are in use (e.g. `def record_call[T](...)`);
   PEP 695 is supported from 3.12 onward, so backward compatibility to 3.12/3.13
@@ -265,7 +272,8 @@ examples/pseudo.py  # canonical nested-handoff example
 - Public API must stay fully typed: `@pylier.node` preserves the wrapped
   callable's signature via PEP 695 `ParamSpec` overloads — don't regress it to
   `-> Any`. Don't add bare `dict`/`list`/`Token` annotations; parameterize them.
-- Commit must pass `ruff check`, `ty check`, and `pytest`.
+- Commit must pass `ruff check`, `ty check`, `pytest`, and `uv lock --check`
+  (lockfile in sync with `pyproject.toml`).
 
 ## Code conventions (project standard)
 

@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-08-13
+
+### Fixed
+
+- `uv.lock` was left out of the 1.4.1 version bump, so CI's `uv run --locked`
+  (publish) and `uv sync --locked` (pages) failed with a stale-lockfile error.
+  The lockfile is regenerated and committed.
+
+### Notes
+
+- `AGENTS.md` now requires any `pyproject.toml` change (incl. version bumps) to
+  run `uv lock` and commit `uv.lock` in the same change, and adds `uv lock --check`
+  to the pre-commit gate.
+
 ## [1.4.1] - 2026-08-13
 
 ### Fixed
