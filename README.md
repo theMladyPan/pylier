@@ -23,12 +23,12 @@
 <table>
 <tr>
 <td width="50%" align="center">
-  <a href="https://theMladyPan.github.io/pylier/fulfillment.html">
+  <a href="https://theMladyPan.github.io/pylier/demos/fulfillment.html">
     <img src="https://raw.githubusercontent.com/theMladyPan/pylier/master/assets/app-flow-view.png" alt="pylier Application Flow view showing nested fulfillment branches" width="100%">
   </a>
 </td>
 <td width="50%" align="center">
-  <a href="https://theMladyPan.github.io/pylier/fulfillment.html">
+  <a href="https://theMladyPan.github.io/pylier/demos/fulfillment.html">
     <img src="https://raw.githubusercontent.com/theMladyPan/pylier/master/assets/data-flow-view.png" alt="pylier Data Flow view showing value provenance across fulfillment branches" width="100%">
   </a>
 </td>
@@ -92,8 +92,8 @@ one.
 
 ## Try demos
 
-- [Document ingestion demo](https://theMladyPan.github.io/pylier/ingest.html)
-- [Fulfillment workflow demo](https://theMladyPan.github.io/pylier/fulfillment.html)
+- [Document ingestion demo](https://theMladyPan.github.io/pylier/demos/ingest.html)
+- [Fulfillment workflow demo](https://theMladyPan.github.io/pylier/demos/fulfillment.html)
 
 ## Quick start: document ingestion
 
@@ -114,7 +114,7 @@ pylier.serve()  # live viewer at http://localhost:8765
 ```
 
 
-The [ingestion example](https://theMladyPan.github.io/pylier/ingest.html) is the fastest way to see pylier's
+The [ingestion example](https://theMladyPan.github.io/pylier/demos/ingest.html) is the fastest way to see pylier's
 value: a document branches into text and image paths, then concurrently embeds
 both branches before they converge at an indexing stage.
 

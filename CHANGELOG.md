@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-08-14
+
+### Added
+
+- MkDocs Material documentation site (`docs/`) with Quickstart, Scenarios
+  (ingestion, `derive` lineage, autotrace, capture levels, FastAPI, sharing,
+  live viewer), and Demos. Built and deployed to GitHub Pages by the updated
+  `pages.yml` workflow alongside the interactive demo replays.
+- `docs` dependency group (`mkdocs`, `mkdocs-material`, `pymdown-extensions`).
+- `tests/test_docs.py` regression suite: nav integrity, required files,
+  `derive` provenance-loss content guard, and broken-admonition syntax check.
+
+### Changed
+
+- `pages.yml` now builds the MkDocs site into `_site` and serves demos under
+  `/demos/` (previously demos at site root via a hand-written landing page).
+- README demo links updated to the new `/demos/` Pages paths.
+
+### Removed
+
+- `pages/index.html` and `tests/test_pages.py` (replaced by the MkDocs site
+  root and `tests/test_docs.py`).
+
 ## [1.4.2] - 2026-08-13
 
 ### Fixed
