@@ -1,0 +1,42 @@
+# Document ingestion pipeline
+
+The canonical pylier scenario: an uploaded document branches into text and image
+paths, each path is processed concurrently, and the branches converge at an
+indexing stage. This is the example shipped in
+[`examples/ingest.py`](https://github.com/theMladyPan/pylier/blob/master/examples/ingest.py)
+and published as the [ingestion demo](/demos/ingest.html).
+
+## What the graph reveals
+
+- **Branching** — a single loaded document splits into text extraction and image
+  extraction, each a decorated node.
+- **Concurrency** — the two branches embed independently; the Application Flow
+  view shows the fork, the Data Flow view shows each branch's values flowing
+  forward.
+- **Convergence** — both branches' embeddings feed a final indexing stage.
+
+## Running it
+
+```bash
+git clone https://github.com/theMladyPan/pylier.git
+cd pylier
+uv sync
+uv run python -m examples.ingest serve   # live viewer: http://localhost:8765
+uv run python -m examples.ingest html    # self-contained pylier-ingest.html
+```
+
+!!! tip "Open the published demo"
+    The [ingestion demo](/demos/ingest.html) is a static replay of exactly this
+    run — no server required.
+
+## Structure
+
+The real example uses `pylier.autotrace(...)` rather than hand-placing
+`@pylier.node` on every function, so the graph emerges from the application's
+own call structure. See [Autotrace without decorators](autotrace.md) for how that
+scope filtering works.
+
+When the branches produce values that are merged into one collection, the merge
+is a plain Python expression that **loses value provenance** — that is exactly
+where [`pylier.derive`](derive-lineage.md) comes in to keep both branches visible
+as sources into the indexing stage.

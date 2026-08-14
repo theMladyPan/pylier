@@ -1,4 +1,4 @@
-name: Publish demos to GitHub Pages
+name: Publish docs and demos to GitHub Pages
 
 on:
   push:
@@ -23,24 +23,33 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.12"
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync --locked --group docs --group examples
       - name: Validate project
         run: uv run pytest -q
-      - name: Render static demos
+      - name: Build docs site and demos
         run: |
-          mkdir -p _site
+          # Render static demos into a temp dir first — mkdocs build cleans its
+          # site-dir, so demos must be copied in AFTER the docs build.
+          mkdir -p _demos_tmp
           uv run python -m examples.ingest html
-          mv pylier-ingest.html _site/ingest.html
-          uv run python -m examples.showcase html --output-dir _site
-          mv _site/pylier-fulfillment-showcase.html _site/fulfillment.html
-          rm _site/pylier-fulfillment-info.html _site/pylier-fulfillment.jsonl
-          cp pages/index.html _site/index.html
+          mv pylier-ingest.html _demos_tmp/ingest.html
+          uv run python -m examples.showcase html --output-dir _demos_tmp
+          mv _demos_tmp/pylier-fulfillment-showcase.html _demos_tmp/fulfillment.html
+          rm _demos_tmp/pylier-fulfillment-info.html _demos_tmp/pylier-fulfillment.jsonl
+
+          # Build the MkDocs site into _site (overwrites any prior _site).
+          uv run mkdocs build --strict --site-dir _site
+
+          # Merge demos under /demos/ — docs link to /demos/ingest.html etc.
+          mkdir -p _site/demos
+          cp _demos_tmp/*.html _site/demos/
+          rm -rf _demos_tmp
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
         with:

@@ -1,6 +1,6 @@
 [project]
 name = "pylier"
-version = "1.4.2"
+version = "1.4.3"
 description = "Decorator-driven data process & pipeline visualization. Render running code as a force-directed graph."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -35,6 +35,11 @@ dev = [
     "ty>=0.0.69",
     "fastapi>=0.100",
     "httpx>=0.27",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10.7",
 ]
 examples = [
     "fastapi>=0.100",
