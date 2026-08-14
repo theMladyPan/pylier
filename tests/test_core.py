@@ -597,7 +597,7 @@ def test_full_invocation_payloads_are_fifo_bounded(monkeypatch):
         reload_settings()
 
 
-def test_decorated_rollback_does_not_copy_accumulated_edge_handoffs(monkeypatch):
+def test_decorated_enter_failure_does_not_copy_accumulated_edge_handoffs(monkeypatch):
     @pylier.node
     def echo(value: str) -> str:
         return value
@@ -627,11 +627,16 @@ def test_decorated_rollback_does_not_copy_accumulated_edge_handoffs(monkeypatch)
             echo("third")
         assert echo("fourth") == "fourth"
 
-    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2", f"{trace.id}:3"]
+    # The old enter rollback removed a partially recorded call; by design it is
+    # gone, so the failed third call stays (node + invocation + argument
+    # handoff). What must NOT happen: the failure deep-copies accumulated
+    # handoffs or strands a frame on the execution stack — that would corrupt
+    # the fourth call's caller resolution.
+    assert list(trace.invocations) == [f"{trace.id}:1", f"{trace.id}:2", f"{trace.id}:3", f"{trace.id}:4"]
     edge = next(edge for edge in trace.edges.values() if edge.target.endswith("echo"))
-    assert edge.count == 3
-    assert len(edge.handoffs) == 3
-    assert [event.kind for event in trace.events] == ["enter", "exit", "enter", "exit", "enter", "exit"]
+    assert edge.count == 4
+    assert len(edge.handoffs) == 4
+    assert [event.kind for event in trace.events] == ["enter", "exit", "enter", "exit", "enter", "enter", "exit"]
 
 
 def test_value_captured_when_enabled(monkeypatch):
