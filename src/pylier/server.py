@@ -104,12 +104,6 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
                     ).encode("utf-8"),
                     "text/html; charset=utf-8",
                 )
-            elif self.path == "/graph":
-                # kept for debugging / non-SSE clients; the page itself uses /events
-                self._send(
-                    json.dumps(graph_payload(), default=str).encode("utf-8"),
-                    "application/json",
-                )
             elif self.path == "/events":
                 self._handle_sse()
             elif self.path.startswith("/invocations/") and self.path.endswith("/payload"):
@@ -158,9 +152,9 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
+            is_history = isinstance(captured_trace, TraceHistory)
             graph_since = -1  # forces an immediate full-graph send on connect
             exec_version_since = 0
-            event_index_since = 0
             history_version = -1
             history_graph_versions: dict[str, int] = {}
             history_exec_versions: dict[str, int] = {}
@@ -168,70 +162,60 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
             try:
                 while True:
                     wrote = False
-                    if isinstance(captured_trace, TraceHistory):
+                    if is_history:
                         history_version = captured_trace.wait_for_change(history_version, timeout=_SSE_HEARTBEAT)
                         traces = captured_trace.snapshot_traces()
                         topology_changed = any(
                             trace.graph_version > history_graph_versions.get(trace.id, -1) for trace in traces
                         )
-                        if topology_changed:
-                            payload = json.dumps(graph_payload(), default=str)
-                            self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
-                            history_graph_versions = {trace.id: trace.graph_version for trace in traces}
-                            wrote = True
-                        batch_events = []
-                        for trace in traces:
-                            previous_exec = history_exec_versions.get(trace.id, 0)
-                            if trace.exec_version <= previous_exec:
-                                continue
-                            event_index = history_event_indices.get(trace.id, 0)
-                            event_index, new_events = trace.events_since(event_index)
-                            history_event_indices[trace.id] = event_index
-                            history_exec_versions[trace.id] = trace.exec_version
-                            batch_events.extend(
-                                {
-                                    "trace_id": trace.id,
-                                    "ts": event.ts,
-                                    "node_id": event.node_id,
-                                    "kind": event.kind,
-                                    "edges": event.edges,
-                                }
-                                for event in new_events
-                            )
-                        if batch_events:
-                            payload = json.dumps(batch_events, default=str)
-                            self.wfile.write(f"event: exec\ndata: {payload}\n\n".encode())
-                            wrote = True
                     else:
                         graph_v, exec_v = captured_trace.wait_for_change(
                             graph_since, exec_version_since, timeout=_SSE_HEARTBEAT
                         )
-                        if graph_v > graph_since:
-                            payload = json.dumps(graph_payload(), default=str)
-                            self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
+                        traces = [captured_trace]
+                        topology_changed = graph_v > graph_since
+
+                    if topology_changed:
+                        payload = json.dumps(graph_payload(), default=str)
+                        self.wfile.write(f"event: graph\ndata: {payload}\n\n".encode())
+                        if is_history:
+                            history_graph_versions = {trace.id: trace.graph_version for trace in traces}
+                        else:
                             graph_since = graph_v
-                            wrote = True
-                        if exec_v > exec_version_since:
-                            event_index_since, new_events = captured_trace.events_since(event_index_since)
-                            # Latency updates advance the execution version without adding a
-                            # timeline event. Advance its cursor either way; otherwise the
-                            # server would spin forever emitting empty ``exec`` batches.
-                            exec_version_since = exec_v
-                            if new_events:
-                                batch = json.dumps(
-                                    [
-                                        {
-                                            "ts": ev.ts,
-                                            "node_id": ev.node_id,
-                                            "kind": ev.kind,
-                                            "edges": ev.edges,
-                                        }
-                                        for ev in new_events
-                                    ],
-                                    default=str,
-                                )
-                                self.wfile.write(f"event: exec\ndata: {batch}\n\n".encode())
-                                wrote = True
+                        wrote = True
+
+                    batch_events = []
+                    for trace in traces:
+                        previous_exec = history_exec_versions.get(trace.id, 0)
+                        if trace.exec_version <= previous_exec:
+                            continue
+                        event_index = history_event_indices.get(trace.id, 0)
+                        event_index, new_events = trace.events_since(event_index)
+                        history_event_indices[trace.id] = event_index
+                        history_exec_versions[trace.id] = trace.exec_version
+                        batch_events.extend(
+                            {
+                                "trace_id": trace.id,
+                                "ts": event.ts,
+                                "node_id": event.node_id,
+                                "kind": event.kind,
+                                "edges": event.edges,
+                            }
+                            for event in new_events
+                        )
+
+                    # Single-trace mode: advance exec_version cursor even when
+                    # no events were returned (latency update without a timeline
+                    # event), otherwise wait_for_change would return immediately
+                    # on the same version and the loop would spin on heartbeats.
+                    if not is_history:
+                        exec_version_since = exec_v
+
+                    if batch_events:
+                        payload = json.dumps(batch_events, default=str)
+                        self.wfile.write(f"event: exec\ndata: {payload}\n\n".encode())
+                        wrote = True
+
                     if wrote:
                         self.wfile.flush()
                     else:
