@@ -36,7 +36,8 @@ The real example uses `pylier.autotrace(...)` rather than hand-placing
 own call structure. See [Autotrace without decorators](autotrace.md) for how that
 scope filtering works.
 
-When the branches produce values that are merged into one collection, the merge
-is a plain Python expression that **loses value provenance** — that is exactly
-where [`pylier.derive`](derive-lineage.md) comes in to keep both branches visible
-as sources into the indexing stage.
+The shipped example converges by passing the two branches to `index` as
+separate arguments, so each branch's value provenance is preserved by the
+argument handoff itself. [`pylier.derive`](derive-lineage.md) is only needed
+when a plain Python expression actually **merges** contributing values into one
+new value and would otherwise lose that lineage.

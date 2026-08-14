@@ -41,7 +41,7 @@ pylier.autotrace(
   qualifying call is still omitted** (it is the trigger, not the first retained
   run).
 - `allow_empty=False` buffers successful calls with no meaningful business input
-  that return `None`, and drops **only the empty parent**. For autotrace,
+  and drops **only the empty parent** when it returns `None`. For autotrace,
   parameters whose runtime value equals their declared default are treated as
   omitted for this filter; use `allow_empty=True` if you need those calls
   retained. Committed children reconnect to the nearest retained caller or trace

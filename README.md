@@ -104,6 +104,10 @@ import pylier
 
 
 @pylier.node
+def load(path: str) -> list[str]: ...
+
+
+@pylier.node
 def embed(chunks: list[str]) -> list[dict]: ...
 
 

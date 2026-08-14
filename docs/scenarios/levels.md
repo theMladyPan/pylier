@@ -30,8 +30,8 @@ Dial the whole trace:
 with pylier.set_level("debug"):
     ...  # everything at debug or below is captured
 
-# or
-pylier.level("trace")  # set globally for the process
+# or set the process default before launch via the environment:
+#   PYLIER_LEVEL=trace
 ```
 
 ## The invariant
