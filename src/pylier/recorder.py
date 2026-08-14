@@ -29,7 +29,7 @@ from types import CodeType, FrameType
 from typing import Any, cast, overload
 
 from pylier.fingerprint import fingerprint, preview_of, serialize_value, size_of, tuple_member_type_names, type_name
-from pylier.model import Edge, Event, Level, Node, Trace, TraceHistory
+from pylier.model import PHASE_ARGUMENTS, PHASE_EXCEPTION, PHASE_RETURN, Edge, Event, Level, Node, Trace, TraceHistory
 
 __all__ = [
     "NodeMeta",
@@ -446,7 +446,7 @@ def _record_enter_arguments(
                 caller.node_id,
                 meta.id,
                 **handoff_details,
-                metadata={"phase": "arguments"},
+                metadata={"phase": PHASE_ARGUMENTS},
                 handoff={
                     "invocation_id": invocation_id,
                     "parent_invocation_id": caller.invocation_id,
@@ -459,7 +459,7 @@ def _record_enter_arguments(
                 trace.root_node_id,
                 meta.id,
                 **handoff_details,
-                metadata={"phase": "arguments"},
+                metadata={"phase": PHASE_ARGUMENTS},
                 handoff={"invocation_id": invocation_id, "arguments": list(arguments)},
             )
             fired.append({"source": trace.root_node_id, "target": meta.id})
@@ -519,7 +519,7 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
                 meta.id,
                 return_target,
                 payload_type="exception",
-                metadata={"phase": "exception"},
+                metadata={"phase": PHASE_EXCEPTION},
                 handoff={
                     "invocation_id": current_invocation.invocation_id if current_invocation else None,
                     "parent_invocation_id": caller.invocation_id if caller else None,
@@ -560,7 +560,7 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
             size=size_of(result) if level >= Level.INFO else None,
             preview=preview_of(result) if level >= Level.DEBUG else None,
             value=serialize_value(result) if _capture_values_enabled() else None,
-            metadata={"phase": "return"},
+            metadata={"phase": PHASE_RETURN},
             handoff={
                 "invocation_id": current_invocation.invocation_id if current_invocation else None,
                 "parent_invocation_id": caller.invocation_id if caller else None,

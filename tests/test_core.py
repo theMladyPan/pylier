@@ -12,6 +12,7 @@ import pytest
 
 import pylier
 from pylier.model import Level, Node, Trace
+from pylier.render import build_html
 
 
 def test_trace_root_captures_nested_argument_and_return_handoffs(monkeypatch):
@@ -798,7 +799,7 @@ def test_trace_serializes_generic_metadata_and_lifecycle():
 
 def test_render_template_uses_boundary_port_without_workspace_tabs():
     """The renderer keeps trace boundaries distinct from algorithm node cards."""
-    html = pylier.build_html(Trace("boundary"))
+    html = build_html(Trace("boundary"))
 
     assert 'id="endpoint-bar"' not in html
     assert 'attr("class", "boundary-port")' in html

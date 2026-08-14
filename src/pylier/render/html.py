@@ -104,8 +104,3 @@ def _escape(text: str) -> str:
     import html as _html
 
     return _html.escape(text, quote=False)
-
-
-def graph_dict(trace: Trace) -> dict[str, Any]:
-    """Expose the renderer's JSON shape (used by the live server's poll API)."""
-    return trace.to_graph_dict()

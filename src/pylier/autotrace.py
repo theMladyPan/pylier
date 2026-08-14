@@ -19,7 +19,7 @@ from pathlib import Path
 from types import CodeType, FrameType
 from typing import Any, Literal
 
-from pylier.model import Event, Invocation, Level, Node, Trace
+from pylier.model import PHASE_ARGUMENTS, Event, Invocation, Level, Node, Trace
 from pylier.recorder import (
     InvocationFrame,
     NodeMeta,
@@ -667,7 +667,7 @@ def _merge_buffered_trace(
                 anchor_invocation_id,
             )
             if omitted_ids and handoff.get("parent_invocation_id") in omitted_ids:
-                if edge.metadata.get("phase") == "arguments":
+                if edge.metadata.get("phase") == PHASE_ARGUMENTS:
                     source = anchor_node_id
                 else:
                     target = anchor_node_id

@@ -172,7 +172,7 @@ src/pylier/
   fingerprint.py  # content fingerprint (type+hash) — only place values are hashed
   recorder.py     # active-trace contextvar, level gating, edge inference, @node core
   autotrace.py    # sys.monitoring hook, scope filtering, warm-up promotion, empty-call buffering
-  config.py       # pydantic-settings (PYLIER_*, .env): level, sidecar path, port
+  config.py       # pydantic-settings (PYLIER_*, .env): level, sidecar path
   tracing/
     sidecar.py    # JSONL event sink (offline replay); edges already resolved
   render/

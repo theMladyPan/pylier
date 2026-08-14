@@ -27,13 +27,10 @@ class Settings(BaseSettings):
             set, the recorder also appends resolved events to disk for offline
             replay and future cross-process consumers.
         sidecar_name: Filename within ``sidecar_path`` for the active sidecar.
-        server_port: Port used by ``pylier.serve()`` for the live viewer.
-        preview_limit: Max chars of value preview captured at DEBUG+ levels.
         capture_values: If True, recorder stores the full serialized payload on
             each edge for click-to-inspect debugging (like logfire capturing
             whatever you pass). Disabled by default; binary payloads are
             always truncated to a summary. Settable via ``PYLIER_CAPTURE_VALUES``.
-        value_limit: Max chars of an aggregated edge payload value.
         payload_max_invocations: Max full invocation payloads retained per trace.
         payload_max_bytes: Max UTF-8 bytes retained for full invocation payloads.
     """
@@ -43,10 +40,7 @@ class Settings(BaseSettings):
     level: Level = Level.INFO
     sidecar_path: Path | None = None
     sidecar_name: str = "pylier-trace.jsonl"
-    server_port: int = 8765
-    preview_limit: int = 80
     capture_values: bool = False
-    value_limit: int = 2000
     payload_max_invocations: int = Field(default=100, gt=0)
     payload_max_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
 

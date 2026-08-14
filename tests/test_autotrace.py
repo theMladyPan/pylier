@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 import pylier
+from pylier.model import PHASE_EXCEPTION
 
 
 def _load_autotrace_module():
@@ -370,7 +371,7 @@ def test_autotrace_matches_decorated_sync_application_and_data_flow(module_facto
     assert _application_pairs(auto_trace) == _application_pairs(decorated_trace)
     assert _data_pairs(auto_trace) == _data_pairs(decorated_trace)
     exception_edge = next(edge for edge in auto_trace.edges.values() if edge.payload_type == "exception")
-    assert exception_edge.metadata["phase"] == "exception"
+    assert exception_edge.metadata["phase"] == PHASE_EXCEPTION
 
 
 def test_autotrace_respects_global_level_gating(module_factory):
