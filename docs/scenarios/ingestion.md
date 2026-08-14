@@ -4,7 +4,7 @@ The canonical pylier scenario: an uploaded document branches into text and image
 paths, each path is processed concurrently, and the branches converge at an
 indexing stage. This is the example shipped in
 [`examples/ingest.py`](https://github.com/theMladyPan/pylier/blob/master/examples/ingest.py)
-and published as the [ingestion demo](/demos/ingest.html).
+and published as the [ingestion demo](https://themladypan.github.io/pylier/demos/ingest.html).
 
 ## What the graph reveals
 
@@ -26,7 +26,7 @@ uv run python -m examples.ingest html    # self-contained pylier-ingest.html
 ```
 
 !!! tip "Open the published demo"
-    The [ingestion demo](/demos/ingest.html) is a static replay of exactly this
+    The [ingestion demo](https://themladypan.github.io/pylier/demos/ingest.html) is a static replay of exactly this
     run — no server required.
 
 ## Structure

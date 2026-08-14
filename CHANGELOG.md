@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] - 2026-08-14
+
+### Fixed
+
+- Docs demo links used absolute paths (`/demos/ingest.html`) that resolved to
+  the GitHub Pages account root instead of the project site
+  (`/pylier/demos/...`), 404-ing. Links now use the full Pages URL
+  (`https://themladypan.github.io/pylier/demos/...`) so they resolve correctly
+  under the project site base.
+
 ## [1.4.4] - 2026-08-14
 
 ### Fixed

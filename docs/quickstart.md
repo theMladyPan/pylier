@@ -64,8 +64,8 @@ debug bundle.
 !!! tip "Published demos"
     Live, interactive demos are published on GitHub Pages:
 
-    - [Document ingestion](/demos/ingest.html) — branched text and image extraction with concurrent embedding
-    - [Fulfillment workflow](/demos/fulfillment.html) — nested assessment, inventory, shipping, and finalization branches
+    - [Document ingestion](https://themladypan.github.io/pylier/demos/ingest.html) — branched text and image extraction with concurrent embedding
+    - [Fulfillment workflow](https://themladypan.github.io/pylier/demos/fulfillment.html) — nested assessment, inventory, shipping, and finalization branches
 
 !!! note "Run the examples locally"
     ```bash
