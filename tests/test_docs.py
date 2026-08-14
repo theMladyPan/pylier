@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-import yaml
+import pytest
 
 REPO = Path(__file__).parents[1]
 MKDOCS_YML = REPO / "mkdocs.yml"
@@ -37,6 +37,9 @@ def test_mkdocs_config_exists():
 
 
 def test_every_nav_file_exists_on_disk():
+    # PyYAML ships with the `docs` group (via mkdocs); skip when absent so the
+    # core CI gate (`uv run --locked pytest`, no docs group) still passes.
+    yaml = pytest.importorskip("yaml")
     config = yaml.safe_load(MKDOCS_YML.read_text(encoding="utf-8"))
     for rel in _nav_md_paths(config.get("nav", [])):
         assert (DOCS_DIR / rel).is_file(), f"nav references missing file: docs/{rel}"
