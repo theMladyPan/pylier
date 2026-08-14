@@ -63,13 +63,12 @@ async def index(document_text: list[str], image_text: list[str]) -> int:
     return len(document_vectors) + len(image_vectors)
 
 
-async def run_pipeline(name: str) -> int:
+async def run_pipeline() -> int:
     """Execute one full ingest run, returning the number of indexed vectors."""
-    with pylier.trace(name):
-        doc = load_document("report.pdf")
-        text_chunks = extract_text(doc)
-        image_chunks = ocr_images(doc)
-        total = await index(text_chunks, image_chunks)
+    doc = load_document("report.pdf")
+    text_chunks = extract_text(doc)
+    image_chunks = ocr_images(doc)
+    total = await index(text_chunks, image_chunks)
     return total
 
 
@@ -81,7 +80,7 @@ def main(mode: str) -> None:
     # point). For a library module imported by name, use `modules="pkg.mod"`
     # instead. Called once, before any `pylier.trace` block — autotrace must be
     # active before the traced calls.
-    pylier.autotrace(modules="__main__")
+    pylier.autotrace(modules=("__main__", "examples.ingest", __name__))
     if mode == "serve":
         # Live mode: open ONE trace and keep it open so the viewer (which
         # resolves the active trace at serve time) watches the same object.
@@ -110,7 +109,8 @@ def main(mode: str) -> None:
         # One-shot: no delays, single run, write a self-contained HTML file.
         _WAIT_RANGE = (0.01, 0.05)
         with _capture_synthetic_values():
-            total = asyncio.run(run_pipeline("doc-ingest"))
+            with pylier.trace("doc-ingest"):
+                total = asyncio.run(run_pipeline())
             print(f"indexed {total} vectors")
             out = pylier.render("pylier-ingest.html", embed_payloads=True)
             print(f"wrote private debug bundle {out}")

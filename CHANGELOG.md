@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.6] - 2026-08-14
+
+### Fixed
+
+- The ingestion demo (`examples/ingest.py`) rendered almost no edges: `run_pipeline`
+  was autotraced AND opened its own `pylier.trace(...)` inside its body, so it
+  became a node in the outer "default" trace while its child calls landed in the
+  inner "doc-ingest" trace. Every application-flow edge in that trace referenced
+  `__main__.run_pipeline` as the caller, but `run_pipeline` was not a node in the
+  doc-ingest trace, so the renderer's `nodeById` edge filter dropped all of them.
+  The trace boundary now wraps the `run_pipeline` call from `main()`, so
+  `run_pipeline` is a node in the same trace as its children and all handoff
+  edges resolve. The autotrace module scope is also widened to cover both the
+  `__main__` and `examples.ingest` module names so the demo works under both
+  `python examples/ingest.py` and `python -m examples.ingest`.
+
 ## [1.4.5] - 2026-08-14
 
 ### Fixed
