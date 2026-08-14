@@ -434,7 +434,7 @@ def test_render_writes_self_contained_html(tmp_path: Path):
     assert 'id="event-console"' in html
     assert "SSE_LOG_LIMIT = 100" in html
     assert "logSseEvent" in html
-    assert "requestAnimationFrame(flushSseLog)" in html
+    assert "requestAnimationFrame(renderSseLog)" in html
     assert "pylier-console-collapsed" in html
     assert 'class="foot-note"' not in html
     assert "payload_kind" not in html
