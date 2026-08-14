@@ -1,5 +1,11 @@
 """Example: a branched document-ingest pipeline visualized with pylier.
 
+This is the **autotrace** demo: no ``@pylier.node`` decorators. ``pylier.autotrace``
+instruments every public Python callable in this module via ``sys.monitoring``,
+so the graph emerges from ordinary function calls. (Trade-off: autotrace has no
+per-node tag API, so the tag-based filters in the viewer are empty here. Tagged
+nodes live in ``examples/showcase.py``.)
+
 Run::
 
     uv run python -m examples.ingest serve   # live viewer at http://localhost:8765
@@ -30,31 +36,26 @@ def _next_wait() -> float:
     return random.uniform(*_WAIT_RANGE)
 
 
-@pylier.node
 def load_document(path: str) -> dict:
     time.sleep(_next_wait())
     return {"path": path, "pages": ["page1 text", "page2 text"], "images": ["img1.png"]}
 
 
-@pylier.node(_tags=["document", "text"])
 def extract_text(doc: dict) -> list[str]:
     time.sleep(_next_wait())
     return [p.upper() for p in doc["pages"]]
 
 
-@pylier.node(_tags=["document", "images"])
 def ocr_images(doc: dict) -> list[str]:
     time.sleep(_next_wait())
     return [f"ocr:{img}" for img in doc["images"]]
 
 
-@pylier.node(_tags=["embedding"])
 async def embed(chunks: list[str]) -> list[dict]:
     await asyncio.sleep(_next_wait())
     return [{"vec": [len(chunk), 0], "text": chunk} for chunk in chunks]
 
 
-@pylier.node(_tags=["indexing"])
 async def index(document_text: list[str], image_text: list[str]) -> int:
     """Embed extracted document and image text concurrently, then index every vector."""
     await asyncio.sleep(_next_wait())
@@ -74,6 +75,13 @@ async def run_pipeline(name: str) -> int:
 
 def main(mode: str) -> None:
     global _WAIT_RANGE
+    # Process-global autotrace: every public callable in this module becomes a
+    # node. Run via `python -m examples.ingest`, this module is loaded as
+    # `__main__` — so scope it as such (the common case for a script-style entry
+    # point). For a library module imported by name, use `modules="pkg.mod"`
+    # instead. Called once, before any `pylier.trace` block — autotrace must be
+    # active before the traced calls.
+    pylier.autotrace(modules="__main__")
     if mode == "serve":
         # Live mode: open ONE trace and keep it open so the viewer (which
         # resolves the active trace at serve time) watches the same object.
