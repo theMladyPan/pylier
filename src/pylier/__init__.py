@@ -28,6 +28,7 @@ from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import cast, overload
 
+from pylier.autotrace import autotrace
 from pylier.model import Edge, Event, Invocation, Level, Node, Trace, TraceHistory
 from pylier.recorder import (
     derive_value as _derive_value,
@@ -42,19 +43,18 @@ from pylier.recorder import (
 from pylier.recorder import (
     node_decorator as _node_decorator,
 )
-from pylier.render import build_html, render_to_file
+from pylier.render import render_to_file
 from pylier.server import serve
 
 __all__ = [
     "node",
     "derive",
+    "autotrace",
     "trace",
     "render",
     "serve",
     "level",
     "set_level",
-    "build_html",
-    "render_to_file",
     "instrument_fastapi",
     "Level",
     "Trace",
@@ -232,11 +232,10 @@ def instrument_fastapi(app: object) -> object:
 
 
 def _attach_sidecar(t: Trace, sidecar: bool | str | Path) -> None:
+    from pylier.config import get_settings
     from pylier.tracing.sidecar import SidecarBackend
 
     if isinstance(sidecar, bool):
-        from pylier.config import get_settings
-
         settings = get_settings()
         if settings.sidecar_path is None:
             raise ValueError("sidecar=True requires PYLIER_SIDECAR_PATH to be configured")
@@ -244,6 +243,6 @@ def _attach_sidecar(t: Trace, sidecar: bool | str | Path) -> None:
     else:
         path = Path(sidecar)
         if path.is_dir():
-            t.sinks.append(SidecarBackend(path))
+            t.sinks.append(SidecarBackend(path, get_settings().sidecar_name))
         else:
             t.sinks.append(SidecarBackend(path.parent, path.name))

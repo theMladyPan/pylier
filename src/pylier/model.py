@@ -36,6 +36,14 @@ class Level(IntEnum):
     TRACE = 30
 
 
+# Handoff phase vocabulary. ``Edge.metadata["phase"]`` is only a UI hint for
+# lane/stroke treatment, but it is cross-file contract: keep the spelling in
+# one place so a typo can't silently break lane styling in the viewer.
+PHASE_ARGUMENTS = "arguments"
+PHASE_EXCEPTION = "exception"
+PHASE_RETURN = "return"
+
+
 @dataclass
 class Node:
     """A pipeline node. One-to-one with a decorated function/method."""

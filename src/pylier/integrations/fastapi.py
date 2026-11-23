@@ -31,7 +31,7 @@ from typing import Any
 
 import pylier
 
-__all__ = ["PylierMiddleware", "instrument_fastapi"]
+__all__ = ["instrument_fastapi"]
 
 
 class PylierMiddleware:

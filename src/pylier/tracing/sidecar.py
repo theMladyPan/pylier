@@ -23,7 +23,7 @@ class SidecarBackend:
         sidecar_name: JSONL filename within ``directory``.
     """
 
-    def __init__(self, directory: Path, sidecar_name: str = "pylier-trace.jsonl") -> None:
+    def __init__(self, directory: Path, sidecar_name: str) -> None:
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         self.path = self.directory / sidecar_name

@@ -1,0 +1,54 @@
+site_name: pylier
+repo_url: https://github.com/theMladyPan/pylier
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.tabbed
+  - pymdownx.snippets
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  - Overview: index.md
+  - Quickstart: quickstart.md
+  - Scenarios:
+    - Introduction: scenarios/index.md
+    - Ingestion Pipeline: scenarios/ingestion.md
+    - Derive Lineage: scenarios/derive-lineage.md
+    - Autotracing: scenarios/autotrace.md
+    - Capture Levels: scenarios/levels.md
+    - FastAPI: scenarios/fastapi.md
+    - Sharing Traces: scenarios/sharing.md
+    - Live Viewer: scenarios/live-viewer.md
+  - Demos: demos.md
+
+use_directory_urls: true

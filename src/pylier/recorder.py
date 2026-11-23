@@ -25,10 +25,12 @@ import time
 import warnings
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
+from types import CodeType, FrameType
 from typing import Any, cast, overload
 
+from pylier.config import get_settings
 from pylier.fingerprint import fingerprint, preview_of, serialize_value, size_of, tuple_member_type_names, type_name
-from pylier.model import Edge, Event, Level, Node, Trace, TraceHistory
+from pylier.model import PHASE_ARGUMENTS, PHASE_EXCEPTION, PHASE_RETURN, Event, Level, Node, Trace, TraceHistory
 
 __all__ = [
     "NodeMeta",
@@ -61,6 +63,7 @@ _default_trace: Trace | None = None
 # instead of the (empty) process default.
 _last_trace: Trace | None = None
 _history = TraceHistory()
+_decorated_code_objects: set[CodeType] = set()
 
 
 @dataclass(frozen=True)
@@ -140,8 +143,6 @@ def current_level() -> Level:
     override = _level_override.get()
     if override is not None:
         return override
-    from pylier.config import get_settings
-
     return get_settings().level
 
 
@@ -160,7 +161,6 @@ def reset_level(token: contextvars.Token[Level | None]) -> None:
 
 def level_context(level: Level | str):
     """Context manager temporarily setting the capture level."""
-    import contextlib
 
     @contextlib.contextmanager
     def _cm():
@@ -189,8 +189,6 @@ def _make_node(meta: NodeMeta) -> Node:
 
 
 def _capture_values_enabled() -> bool:
-    from pylier.config import get_settings
-
     return get_settings().capture_values
 
 
@@ -234,25 +232,33 @@ def derive_value[T](value: T, *, from_: Iterable[object]) -> T:
     return value
 
 
-def _argument_handoff_details(
-    args: tuple[Any, ...], kwargs: dict[str, Any], arguments: dict[str, Any], level: Level, capture: bool
-) -> dict[str, Any]:
-    """Summarize one inbound handoff without losing single-value type detail."""
-    values = (*args, *kwargs.values())
-    if not values:
-        return {"payload_type": "empty", "size": None, "preview": None, "value": None}
-    payload = values[0] if len(values) == 1 else arguments
-    return {
-        "payload_type": type_name(payload) if len(values) == 1 else "arguments",
-        "size": size_of(payload) if level >= Level.INFO else None,
-        "preview": preview_of(payload) if level >= Level.DEBUG else None,
-        "payload_types": tuple_member_type_names(payload),
-        "value": serialize_value(payload) if capture else None,
-    }
+def current_execution_stack() -> tuple[InvocationFrame, ...]:
+    """Return the active decorated/autotraced invocation stack for this context."""
+    return _execution_stack.get()
 
 
-def record_enter(
-    trace: Trace, meta: NodeMeta, args: tuple[Any, ...], kwargs: dict[str, Any]
+def use_execution_stack(
+    stack: tuple[InvocationFrame, ...],
+) -> contextvars.Token[tuple[InvocationFrame, ...]]:
+    """Replace the active invocation stack for this context."""
+    return _execution_stack.set(stack)
+
+
+def push_execution_frame(frame: InvocationFrame) -> contextvars.Token[tuple[InvocationFrame, ...]]:
+    """Push one active invocation frame onto the execution stack."""
+    return use_execution_stack((*_execution_stack.get(), frame))
+
+
+def reset_execution_frame(token: contextvars.Token[tuple[InvocationFrame, ...]]) -> None:
+    """Restore the execution stack saved by :func:`push_execution_frame`."""
+    _execution_stack.reset(token)
+
+
+def _record_enter_arguments(
+    trace: Trace,
+    meta: NodeMeta,
+    arguments: dict[str, Any],
+    values: tuple[Any, ...],
 ) -> contextvars.Token[tuple[InvocationFrame, ...]]:
     """Register a call, preferring its direct caller over value lineage.
 
@@ -260,58 +266,87 @@ def record_enter(
     At the top level, the trace root is the implicit orchestration caller.
     Fingerprints remain available to ``derive()`` but never bypass either
     execution boundary in the default graph.
+
+    All fallible work (fingerprinting, serialization, node construction) runs
+    before the mutation section; the mutation section only appends to
+    in-memory collections, so it cannot fail partway and strand a partial
+    graph (this is what the removed enter rollback machinery insured against).
     """
-    trace.get_or_create_node(_make_node(meta))
     caller_stack = _execution_stack.get()
     caller = caller_stack[-1] if caller_stack else None
-    invocation_id = trace.next_invocation_id()
-    execution_token = _execution_stack.set((*caller_stack, InvocationFrame(meta.id, invocation_id)))
     level = current_level()
     capture = _capture_values_enabled()
-    arguments = dict(zip(meta.parameter_names, args, strict=False))
-    arguments.update(kwargs)
-    trace.create_invocation(invocation_id, meta.id, caller.invocation_id if caller else None, list(arguments))
-    if capture:
-        from pylier.config import get_settings
-
-        settings = get_settings()
-        trace.store_invocation_payload(
-            invocation_id,
-            {"arguments": serialize_value(arguments, limit=None), "result": ""},
-            settings.payload_max_invocations,
-            settings.payload_max_bytes,
-        )
-    fired: list[dict[str, str]] = []
-    handoff_details = _argument_handoff_details(args, kwargs, arguments, level, capture)
+    # Inbound-handoff summary (inlined former ``_argument_handoff_details``).
+    handoff_details: dict[str, Any]
+    if not values:
+        handoff_details = {"payload_type": "empty", "size": None, "preview": None, "value": None}
+    else:
+        payload = values[0] if len(values) == 1 else arguments
+        handoff_details = {
+            "payload_type": type_name(payload) if len(values) == 1 else "arguments",
+            "size": size_of(payload) if level >= Level.INFO else None,
+            "preview": preview_of(payload) if level >= Level.DEBUG else None,
+            "payload_types": tuple_member_type_names(payload),
+            "value": serialize_value(payload) if capture else None,
+        }
     # Data Flow intentionally observes every matching argument even when an
     # active caller provides the authoritative Application Flow handoff.
+    # Edge details are precomputed here along with the fingerprinting so the
+    # mutation loop below never does fallible work.
+    producer_handoffs: list[tuple[str, str | None, str, str, dict[str, Any]]] = []
     for parameter_name, argument_value in arguments.items():
         if argument_value is None:
             continue
         for producer_id, producer_invocation_id, provenance in trace.lookup_producers(fingerprint(argument_value)):
-            trace.add_data_edge(
-                producer_id,
-                meta.id,
-                payload_type=type_name(argument_value),
-                size=size_of(argument_value) if level >= Level.INFO else None,
-                preview=preview_of(argument_value) if level >= Level.DEBUG else None,
-                payload_types=tuple_member_type_names(argument_value),
-                value=serialize_value(argument_value) if capture else None,
-                metadata={"perspective": "data"},
-                handoff={
-                    "producer_invocation_id": producer_invocation_id,
-                    "consumer_invocation_id": invocation_id,
-                    "parameter": parameter_name,
-                    "provenance": provenance,
-                },
+            producer_handoffs.append(
+                (
+                    producer_id,
+                    producer_invocation_id,
+                    provenance,
+                    parameter_name,
+                    {
+                        "payload_type": type_name(argument_value),
+                        "size": size_of(argument_value) if level >= Level.INFO else None,
+                        "preview": preview_of(argument_value) if level >= Level.DEBUG else None,
+                        "payload_types": tuple_member_type_names(argument_value),
+                        "value": serialize_value(argument_value) if capture else None,
+                    },
+                )
             )
+    enter_payload: dict[str, str] | None = None
+    payload_max_invocations: int | None = None
+    payload_max_bytes: int | None = None
+    if capture:
+        settings = get_settings()
+        enter_payload = {"arguments": serialize_value(arguments, limit=None), "result": ""}
+        payload_max_invocations = settings.payload_max_invocations
+        payload_max_bytes = settings.payload_max_bytes
+
+    # ---- mutation section: pure in-memory append/incr, cannot fail ----
+    trace.get_or_create_node(_make_node(meta))
+    invocation_id = trace.next_invocation_id()
+    trace.create_invocation(invocation_id, meta.id, caller.invocation_id if caller else None, list(arguments))
+    fired: list[dict[str, str]] = []
+    for producer_id, producer_invocation_id, provenance, parameter_name, details in producer_handoffs:
+        trace.add_data_edge(
+            producer_id,
+            meta.id,
+            **details,
+            metadata={"perspective": "data"},
+            handoff={
+                "producer_invocation_id": producer_invocation_id,
+                "consumer_invocation_id": invocation_id,
+                "parameter": parameter_name,
+                "provenance": provenance,
+            },
+        )
 
     if caller is not None:
         trace.add_edge(
             caller.node_id,
             meta.id,
             **handoff_details,
-            metadata={"phase": "arguments"},
+            metadata={"phase": PHASE_ARGUMENTS},
             handoff={
                 "invocation_id": invocation_id,
                 "parent_invocation_id": caller.invocation_id,
@@ -324,7 +359,7 @@ def record_enter(
             trace.root_node_id,
             meta.id,
             **handoff_details,
-            metadata={"phase": "arguments"},
+            metadata={"phase": PHASE_ARGUMENTS},
             handoff={"invocation_id": invocation_id, "arguments": list(arguments)},
         )
         fired.append({"source": trace.root_node_id, "target": meta.id})
@@ -338,7 +373,28 @@ def record_enter(
             edges=fired,
         )
     )
+    if enter_payload is not None and payload_max_invocations is not None and payload_max_bytes is not None:
+        trace.store_invocation_payload(
+            invocation_id,
+            enter_payload,
+            payload_max_invocations,
+            payload_max_bytes,
+        )
+    # Pushed last: the only mutation visible outside the trace. If any trace
+    # mutation above failed (sink/listener error), no frame is stranded on the
+    # execution stack for later calls — this replaced the old enter rollback's
+    # ``reset_execution_frame`` in the error path.
+    execution_token = push_execution_frame(InvocationFrame(meta.id, invocation_id))
     return execution_token
+
+
+def record_enter(
+    trace: Trace, meta: NodeMeta, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> contextvars.Token[tuple[InvocationFrame, ...]]:
+    arguments = dict(zip(meta.parameter_names, args, strict=False))
+    arguments.update(kwargs)
+    values = (*args, *kwargs.values())
+    return _record_enter_arguments(trace, meta, arguments, values)
 
 
 def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | None, ms: float | None = None) -> None:
@@ -359,7 +415,7 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
                 meta.id,
                 return_target,
                 payload_type="exception",
-                metadata={"phase": "exception"},
+                metadata={"phase": PHASE_EXCEPTION},
                 handoff={
                     "invocation_id": current_invocation.invocation_id if current_invocation else None,
                     "parent_invocation_id": caller.invocation_id if caller else None,
@@ -385,11 +441,13 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
         _emit(trace, meta, result=None, return_type=None)
         return
     return_type = type_name(result)
-    # Computed unconditionally: the nested-return data edge and the
-    # completion preview below both use `level`, and a recursive decorated
-    # call (caller.node_id == meta.id) skips the application-flow edge block
-    # above — without this hoist `level` would be unbound there.
+    # Used by the return edge, the nested-return data edge, and invocation
+    # completion — computed once (also covers the recursive self-loop case
+    # that skips both edge blocks but still completes the invocation).
     level = current_level()
+    capture = _capture_values_enabled()
+    size = size_of(result)
+    preview = preview_of(result) if level >= Level.DEBUG else None
     # ``return_target`` is always a non-None node id (the caller, or the trace
     # root when this is a top-level call); only the self-loop is skipped.
     if return_target != meta.id:
@@ -397,10 +455,10 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
             meta.id,
             return_target,
             payload_type="empty" if result is None else return_type,
-            size=size_of(result) if level >= Level.INFO else None,
-            preview=preview_of(result) if level >= Level.DEBUG else None,
-            value=serialize_value(result) if _capture_values_enabled() else None,
-            metadata={"phase": "return"},
+            size=size if level >= Level.INFO else None,
+            preview=preview if level >= Level.DEBUG else None,
+            value=serialize_value(result) if capture else None,
+            metadata={"phase": PHASE_RETURN},
             handoff={
                 "invocation_id": current_invocation.invocation_id if current_invocation else None,
                 "parent_invocation_id": caller.invocation_id if caller else None,
@@ -413,10 +471,10 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
             meta.id,
             caller.node_id,
             payload_type=return_type,
-            size=size_of(result) if level >= Level.INFO else None,
-            preview=preview_of(result) if level >= Level.DEBUG else None,
+            size=size if level >= Level.INFO else None,
+            preview=preview if level >= Level.DEBUG else None,
             payload_types=tuple_member_type_names(result),
-            value=serialize_value(result) if _capture_values_enabled() else None,
+            value=serialize_value(result) if capture else None,
             metadata={"perspective": "data"},
             handoff={
                 "producer_invocation_id": current_invocation.invocation_id if current_invocation else None,
@@ -429,13 +487,11 @@ def record_exit(trace: Trace, meta: NodeMeta, result: Any, exc: BaseException | 
         current_invocation.invocation_id if current_invocation else None,
         duration_ms=ms,
         result_type=return_type,
-        result_size=size_of(result),
-        result_preview=preview_of(result) if level >= Level.DEBUG else None,
+        result_size=size,
+        result_preview=preview if level >= Level.DEBUG else None,
         exception=None,
     )
-    if _capture_values_enabled():
-        from pylier.config import get_settings
-
+    if capture:
         settings = get_settings()
         invocation_id = current_invocation.invocation_id if current_invocation else None
         _state, payload = trace.invocation_payload(invocation_id) if invocation_id else ("missing", None)
@@ -466,45 +522,50 @@ def _emit(trace: Trace, meta: NodeMeta, result: Any, return_type: str | None) ->
     if not trace.sinks:
         return
     level = current_level()
-    # Emit a compact, replayable event: the node and every edge into it.
-    edges_out: list[dict[str, Any]] = []
-    data_edges_out: list[dict[str, Any]] = []
-    for (_src, tgt), edge in trace.edges.items():
-        if tgt == meta.id:
-            edges_out.append(_edge_dict(edge))
-    for (_src, tgt), edge in trace.data_edges.items():
-        if tgt == meta.id:
-            data_edges_out.append(_edge_dict(edge))
-    event = {
-        "ts": time.time(),
-        "node_id": meta.id,
-        "name": meta.name,
-        "module": meta.module,
-        "level": int(level),
-        "tags": list(meta.tags),
-        "return_type": return_type,
-        "result_preview": preview_of(result) if level >= Level.DEBUG and result is not None else None,
-        "edges": edges_out,
-        "data_edges": data_edges_out,
-    }
+    node = trace.nodes.get(meta.id)
+    if node is None:
+        return
+    result_preview = preview_of(result) if level >= Level.DEBUG and result is not None else None
+    event = _sink_event(
+        node=node,
+        trace=trace,
+        level=level,
+        ts=time.time(),
+        return_type=return_type,
+        result_preview=result_preview,
+    )
     for sink in trace.sinks:
         # sinks must never break the recording run
         with contextlib.suppress(Exception):
             sink(event)
 
 
-def _edge_dict(edge: Edge) -> dict[str, Any]:
+def _sink_event(
+    *,
+    node: Node,
+    trace: Trace,
+    level: Level,
+    ts: float,
+    return_type: str | None,
+    result_preview: str | None,
+) -> dict[str, Any]:
+    """Shape one sink event: the node plus every resolved edge into it.
+
+    Shared by the recorder and the autotrace buffered-merge emitters so sink
+    consumers see one identical event shape. Edges stay resolved relations
+    (serialized by ``Trace._edge_dict``, the single source of truth).
+    """
     return {
-        "source": edge.source,
-        "target": edge.target,
-        "payload": edge.payload_type,
-        "size": edge.size,
-        "preview": edge.preview,
-        "payload_types": list(edge.payload_types),
-        "count": edge.count,
-        "value": edge.value,
-        "metadata": edge.metadata,
-        "handoffs": edge.handoffs,
+        "ts": ts,
+        "node_id": node.id,
+        "name": node.name,
+        "module": node.module,
+        "level": int(level),
+        "tags": list(node.tags),
+        "return_type": return_type,
+        "result_preview": result_preview,
+        "edges": [Trace._edge_dict(edge) for edge in trace.edges.values() if edge.target == node.id],
+        "data_edges": [Trace._edge_dict(edge) for edge in trace.data_edges.values() if edge.target == node.id],
     }
 
 
@@ -525,7 +586,7 @@ def record_call[T](meta: NodeMeta, func: Callable[..., T], args: tuple[Any, ...]
         raise
     finally:
         record_exit(trace, meta, result, exc, (time.perf_counter() - start) * 1000.0)
-        _execution_stack.reset(execution_token)
+        reset_execution_frame(execution_token)
 
 
 async def record_call_async[T](
@@ -547,7 +608,7 @@ async def record_call_async[T](
         raise
     finally:
         record_exit(trace, meta, result, exc, (time.perf_counter() - start) * 1000.0)
-        _execution_stack.reset(execution_token)
+        reset_execution_frame(execution_token)
 
 
 def make_meta(func: Callable[..., Any], level: Level, tags: tuple[str, ...]) -> NodeMeta:
@@ -563,6 +624,58 @@ def make_meta(func: Callable[..., Any], level: Level, tags: tuple[str, ...]) -> 
         parameter_names=tuple(inspect.signature(func).parameters),
         is_async=inspect.iscoroutinefunction(func),
     )
+
+
+def make_frame_meta(
+    frame: FrameType,
+    level: Level,
+    tags: tuple[str, ...] = (),
+    *,
+    parameter_names: tuple[str, ...] | None = None,
+) -> NodeMeta:
+    """Build node metadata from a live Python frame for autotrace."""
+    code = frame.f_code
+    module = frame.f_globals.get("__name__", "unknown") or "unknown"
+    name = getattr(code, "co_qualname", code.co_name)
+    if parameter_names is None:
+        parameter_names = tuple(frame_arguments(frame))
+    return NodeMeta(
+        id=f"{module}.{name}",
+        name=name,
+        module=module,
+        level=level,
+        tags=tags,
+        parameter_names=parameter_names,
+        is_async=bool(code.co_flags & (inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR)),
+    )
+
+
+def frame_arguments(frame: FrameType) -> dict[str, Any]:
+    """Return bound business arguments from a live frame.
+
+    Conventional ``self`` / ``cls`` parameters stay implicit so autotrace uses
+    the same empty-call rules the public API documents.
+    """
+    arg_info = inspect.getargvalues(frame)
+    arguments: dict[str, Any] = {}
+    for parameter_name in arg_info.args:
+        if parameter_name in {"self", "cls"}:
+            continue
+        arguments[parameter_name] = arg_info.locals[parameter_name]
+    if arg_info.varargs:
+        varargs = arg_info.locals.get(arg_info.varargs, ())
+        if varargs:
+            arguments[arg_info.varargs] = varargs
+    if arg_info.keywords:
+        keyword_arguments = arg_info.locals.get(arg_info.keywords, {})
+        for keyword_name, keyword_value in keyword_arguments.items():
+            arguments[keyword_name] = keyword_value
+    return arguments
+
+
+def is_decorated_code(code: CodeType) -> bool:
+    """Return whether ``code`` belongs to an explicit ``@pylier.node`` wrapper target."""
+    return code in _decorated_code_objects
 
 
 def _normalize_tags(tags: Sequence[str]) -> tuple[str, ...]:
@@ -616,6 +729,9 @@ def node_decorator[**P, R](
     normalized_tags = _normalize_tags(_tags)
 
     def wrap(fn: Callable[P, R]) -> Callable[P, R]:
+        code = getattr(fn, "__code__", None)
+        if isinstance(code, CodeType):
+            _decorated_code_objects.add(code)
         meta = make_meta(fn, resolved_level, normalized_tags)
         if inspect.iscoroutinefunction(fn):
             # ParamSpec preserves the call signature; the casts below only

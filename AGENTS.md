@@ -32,12 +32,24 @@ tooling without an explicit decision.
 ## Core design decisions (why over what)
 
 ### Decorator-first, edges inferred — never declared
-- `@pylier.node` marks a function as a node. Application handoffs and Data Flow
-  provenance are inferred at runtime; users never declare edges.
+- `@pylier.node` marks a function as a node. `pylier.autotrace(...)` is the
+  opt-in sibling for public Python callables when users want the same graph
+  without decorators. Application handoffs and Data Flow provenance are still
+  inferred at runtime; users never declare edges.
 - **Why:** the whole value is "decorate, structure emerges." A manual edge API
   (`pipe.connect(A, B)`) was explicitly rejected: it duplicates actual runtime
   behavior, is verbose, and breaks the Plotly/logfire "just decorate" feel.
 - Implication: there is no edge-wiring API. Don't add one.
+
+### Autotrace is recorder sugar, not a second tracer
+- `pylier.autotrace(...)` uses stdlib `sys.monitoring` to feed ordinary Python
+  calls back through the same recorder enter/exit path as `@pylier.node`.
+- **Why:** Application Flow, Data Flow, levels, payload capture, sidecars,
+  events, and viewer behavior stay identical when the code path is the same.
+- Product rules: explicit `@pylier.node` wins over autotrace, positive
+  `min_exec_time` is Logfire-style warm-up promotion, and `allow_empty=False`
+  buffers only successful calls with no meaningful business inputs, treating
+  values equal to declared defaults as omitted for that filter.
 
 ### A node is a function; edges describe runtime movement
 - `function == node`. Application Flow edges are argument, return, empty, or
@@ -105,8 +117,9 @@ tooling without an explicit decision.
   animate only the selected trace and update call-count badges locally.
 
 ### Flat top-level API
-- `@pylier.node`, `pylier.trace()`, `pylier.render()`, `pylier.serve()`,
-  `pylier.set_level()`, `pylier.instrument_fastapi()`. No `Tracer()` instances.
+- `@pylier.node`, `pylier.autotrace()`, `pylier.trace()`, `pylier.render()`,
+  `pylier.serve()`, `pylier.set_level()`, `pylier.instrument_fastapi()`. No
+  `Tracer()` instances.
 - **Why:** mirrors logfire's flat, decoration-first feel. Multiple independent
   tracers (class-based) were rejected for v0.1 as extra boilerplate; revisit
   only if real multi-tracer needs appear before publishing.
@@ -116,6 +129,8 @@ tooling without an explicit decision.
 
 ### Sync + async now, personal lib, publishable later
 - `@node` auto-detects coroutine functions and wraps them correctly.
+  `autotrace()` treats sync functions, coroutines, generators, and async
+  generators as one logical invocation across yield/resume boundaries.
 - **Why:** async pipelines (e.g. uploaded-doc processing) are common; deferring
   async would force a rewrite. Packaging stays light (src layout, hatchling,
   pydantic-settings) so publishing later is a flip, not a migration.
@@ -160,7 +175,8 @@ src/pylier/
   model.py        # Node, Edge, Event, Trace, TraceHistory, Level — neutral core
   fingerprint.py  # content fingerprint (type+hash) — only place values are hashed
   recorder.py     # active-trace contextvar, level gating, edge inference, @node core
-  config.py       # pydantic-settings (PYLIER_*, .env): level, sidecar path, port
+  autotrace.py    # sys.monitoring hook, scope filtering, warm-up promotion, empty-call buffering
+  config.py       # pydantic-settings (PYLIER_*, .env): level, sidecar path
   tracing/
     sidecar.py    # JSONL event sink (offline replay); edges already resolved
   render/
@@ -173,6 +189,7 @@ src/pylier/
                   #   + /events (SSE) + /invocations/<id>/<inv>/payload
                   #   + /export/<trace_id> (standalone bundle with payloads)
 tests/test_core.py
+tests/test_autotrace.py
 tests/test_fastapi.py
 examples/ingest.py
 examples/pseudo.py  # canonical nested-handoff example
@@ -186,7 +203,8 @@ examples/pseudo.py  # canonical nested-handoff example
   hint for lane and stroke treatment.
 - **Level filtering runs before instrumentation.** Uncaptured nodes call the
   raw function with zero overhead and register nothing — otherwise they'd
-  create phantom edges into captured nodes.
+  create phantom edges into captured nodes. Autotraced INFO nodes must obey the
+  same gate before any timing/buffering state is created.
 - **Two trace versions**: `graph_version` bumps only on topology change (new
   node/edge — SSE pushes full graph rarely); `exec_version` bumps on every
   enter/exit event (SSE pushes exec batches in real time). Call-count
@@ -201,6 +219,13 @@ examples/pseudo.py  # canonical nested-handoff example
   the most recently entered `with pylier.trace(...)` block, not the empty
   default. `pylier.serve()` with no explicit trace renders the retained history
   (newest trace selected); pass `trace=` to limit the live viewer to one run.
+- **Autotrace uses one global monitoring tool slot.** Repeated identical
+  activation is a no-op, conflicting activation fails, and explicit decorated
+  code objects are skipped so `@pylier.node` remains authoritative.
+- **Buffered empty-call filtering records into an unregistered temporary
+  trace.** Only the completed merge touches the retained trace, sinks, payload
+  FIFO, versions, and history; discarded parents must never leak to HTML, SSE,
+  sidecars, or `TraceHistory`.
 
 ## Dev environment
 
@@ -208,9 +233,19 @@ examples/pseudo.py  # canonical nested-handoff example
   - Install/sync deps: `uv sync` (`uv sync --group examples` for runnable web examples)
   - Run anything: `uv run <cmd>` (e.g. `uv run pytest`), never bare `python`
   - Add a dep: `uv add <pkg>` (runtime) or under `[dependency-groups].dev`
-- Python target is **3.14** (`requires-python = ">=3.14"`). PEP 695 type
-  parameters are in use (e.g. `def record_call[T](...)`); don't revert to
-  `TypeVar`/`Union`/`Optional`.
+  - **`uv.lock` is committed and CI runs `uv run --locked`** (publish.yml) and
+    `uv sync --locked` (pages.yml). Any change to `pyproject.toml` — including a
+    `[project].version` bump — MUST be followed by `uv lock` and the lockfile
+    committed in the same change. A stale lockfile fails CI with
+    `error: The lockfile ... needs to be updated`. Verify before pushing with
+    `uv lock --check` (fast, no install) or the exact CI gate
+    `uv run --locked pytest`.
+- Python target is **3.12+** (`requires-python = ">=3.12"`; `target-version = "py312"`
+  for ruff). PEP 695 type parameters are in use (e.g. `def record_call[T](...)`);
+  PEP 695 is supported from 3.12 onward, so backward compatibility to 3.12/3.13
+  requires no architecture change — do not add 3.14-only syntax (e.g. the bare
+  `except A, B:` comma form, reintroduced in 3.14; use parenthesized `except (A, B):`).
+  Don't revert to `TypeVar`/`Union`/`Optional`.
 - Layout is **src/** — imports are `from pylier...`, not `from src.pylier...`.
 
 ## Testing instructions
@@ -243,7 +278,8 @@ examples/pseudo.py  # canonical nested-handoff example
 - Public API must stay fully typed: `@pylier.node` preserves the wrapped
   callable's signature via PEP 695 `ParamSpec` overloads — don't regress it to
   `-> Any`. Don't add bare `dict`/`list`/`Token` annotations; parameterize them.
-- Commit must pass `ruff check`, `ty check`, and `pytest`.
+- Commit must pass `ruff check`, `ty check`, `pytest`, and `uv lock --check`
+  (lockfile in sync with `pyproject.toml`).
 
 ## Code conventions (project standard)
 
@@ -258,6 +294,13 @@ examples/pseudo.py  # canonical nested-handoff example
 
 - **Fingerprinting misses transformed/aggregated copies** (see edge-inference
   decision above). Document, don't silently patch.
+- **Autotrace is Python-defined-only.** It ignores C callables and requires a
+  runtime with `sys.monitoring` and `sys._getframe`; calling the API on an
+  unsupported runtime fails clearly instead of changing import-time behavior.
+- **Autotrace empty-call filtering is value-based, not caller-intent-based.**
+  Parameters whose runtime value equals their declared default are treated as
+  omitted for `allow_empty=False`; users who need those calls retained should
+  set `allow_empty=True`.
 - The live viewer pushes retained **in-memory** traces; the sidecar sink writes
   events but the viewer doesn't yet reconstruct from a sidecar across
   processes. (Fast-follow: viewer tails sidecar.)
