@@ -89,7 +89,11 @@ tooling without an explicit decision.
   Static HTML remains metadata-only unless the explicit
   `pylier.render(..., embed_payloads=True)` debug-bundle opt-in embeds the
   retained invocation payloads. The live viewer retains every produced trace
-  in a left root-trace history.
+  in a left root-trace history, and each trace tab's right-click menu offers
+  **Export**: `GET /export/<trace_id>` returns that one trace as the same static
+  bundle with `embed_payloads=True`, so the saved file keeps the graph data and
+  the retained payloads. Static artifacts disable the item — they have no server
+  to ask, and they are already standalone files.
 - **Why:** one look everywhere; no drift between test artifacts and live
   preview. The template also falls back to embedded JSON for `file://` opens.
 - The client keeps a **persistent force simulation + D3 join** — never tear
@@ -165,7 +169,9 @@ src/pylier/
   integrations/
     __init__.py    # lazy-imported framework adapters; never imported by `import pylier`
     fastapi.py     # `pylier.instrument_fastapi`: pure-ASGI per-request trace middleware
-  server.py       # stdlib threaded viewer: GET / (html) + GET /graph (json)
+  server.py       # stdlib threaded viewer: GET / (html) + /graph (json)
+                  #   + /events (SSE) + /invocations/<id>/<inv>/payload
+                  #   + /export/<trace_id> (standalone bundle with payloads)
 tests/test_core.py
 tests/test_fastapi.py
 examples/ingest.py

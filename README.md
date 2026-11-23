@@ -186,6 +186,8 @@ branch lineage visible in the next decorated stage. See
   is synthetic.
 - **Stream or share** — `pylier.serve()` streams updates to a live in-process
   viewer with SSE; `pylier.render()` exports a portable HTML file for sharing.
+  In the live viewer, right-click a trace and pick **Export** to download that
+  one run as standalone HTML, retained payloads included.
 - **Keep an audit trail** — `pylier.trace(..., sidecar="trace.jsonl")` writes
   already-resolved events to JSONL for offline consumers.
 

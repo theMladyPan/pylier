@@ -721,6 +721,47 @@ def test_live_server_marks_rendered_html_live():
         server.server_close()
 
 
+def test_live_server_exports_one_trace_as_standalone_html_with_payloads(monkeypatch):
+    """The trace menu export downloads a static bundle that keeps retained payloads."""
+    from pylier.config import reload_settings
+
+    monkeypatch.setenv("PYLIER_CAPTURE_VALUES", "true")
+    reload_settings()
+
+    @pylier.node
+    def echo(value: str) -> str:
+        return value
+
+    try:
+        with pylier.trace("POST /tag") as trace:
+            echo("synthetic payload")
+
+        server = pylier.serve(trace=trace, port=0, open_browser=False)
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+        try:
+            connection.request("GET", f"/export/{trace.id}")
+            response = connection.getresponse()
+            body = response.read().decode()
+
+            assert response.status == 200
+            assert response.getheader("Content-Disposition") == 'attachment; filename="post-tag-pylier.html"'
+            assert "const LIVE = false;" in body
+            assert "const EMBEDDED_PAYLOADS = {" in body
+            assert "synthetic payload" in body
+
+            connection.request("GET", "/export/unknown-trace")
+            missing = connection.getresponse()
+            missing.read()
+            assert missing.status == 404
+        finally:
+            connection.close()
+            server.shutdown()
+            server.server_close()
+    finally:
+        monkeypatch.delenv("PYLIER_CAPTURE_VALUES")
+        reload_settings()
+
+
 def test_sse_latency_update_does_not_emit_empty_exec_batches():
     trace = Trace("sse-latency")
     trace.get_or_create_node(Node(id="latency", name="latency", module="tests", level=Level.INFO))
