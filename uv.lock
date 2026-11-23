@@ -621,7 +621,7 @@ wheels = [
 
 [[package]]
 name = "pylier"
-version = "1.4.6"
+version = "1.4.7"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-settings" },
