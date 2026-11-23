@@ -29,6 +29,9 @@ connection.
     use it for synthetic or debug data. The default `render()` stays
     metadata-only precisely so a shared HTML never leaks business data.
 
+From the live viewer you get the same bundle for a single run: right-click a
+trace tab and choose **Export**. The warning above applies to that download too.
+
 ## Audit trail (sidecar)
 
 ```python

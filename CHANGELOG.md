@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.7] - 2026-11-23
+
+### Added
+
+- Right-click any trace tab in the live viewer and choose **Export** to save
+  that one run as a standalone HTML file. The viewer answers
+  `GET /export/<trace_id>` with the same bundle
+  `pylier.render(..., embed_payloads=True)` writes — graph data plus the
+  retained invocation payloads — and names the download after the trace
+  (`post-tag-pylier.html`). Static artifacts show the item disabled: they have
+  no server to ask and are already standalone files.
+
 ## [1.4.6] - 2026-08-14
 
 ### Fixed
