@@ -15,6 +15,7 @@ the sidecar remains the offline transport.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,12 +81,20 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
             # silence default request logging
             pass
 
-        def _send(self, body: bytes, content_type: str, status: int = HTTPStatus.OK) -> None:
+        def _send(
+            self,
+            body: bytes,
+            content_type: str,
+            status: int = HTTPStatus.OK,
+            headers: dict[str, str] | None = None,
+        ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Connection", "close")
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -114,8 +123,23 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
                 self._handle_sse()
             elif self.path.startswith("/invocations/") and self.path.endswith("/payload"):
                 self._handle_invocation_payload()
+            elif self.path.startswith("/export/"):
+                self._handle_export()
             else:
                 self._send(b"not found", "text/plain", HTTPStatus.NOT_FOUND)
+
+        def _handle_export(self) -> None:
+            """Download one trace as a standalone bundle, payloads included."""
+            trace_id = unquote(self.path.split("/", 2)[2])
+            trace = _find_trace(captured_trace, trace_id)
+            if trace is None:
+                self._send(b"trace not found", "text/plain", HTTPStatus.NOT_FOUND)
+                return
+            self._send(
+                build_html(trace, embed_payloads=True).encode("utf-8"),
+                "text/html; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{_export_filename(trace)}"'},
+            )
 
         def _handle_invocation_payload(self) -> None:
             """Return one retained full payload only after inspector expansion."""
@@ -124,10 +148,7 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
                 self._send(b"not found", "text/plain", HTTPStatus.NOT_FOUND)
                 return
             trace_id, invocation_id = unquote(parts[2]), unquote(parts[3])
-            if isinstance(captured_trace, TraceHistory):
-                trace = captured_trace.traces.get(trace_id)
-            else:
-                trace = captured_trace if captured_trace.id == trace_id else None
+            trace = _find_trace(captured_trace, trace_id)
             if trace is None:
                 self._send(b"trace not found", "text/plain", HTTPStatus.NOT_FOUND)
                 return
@@ -247,6 +268,19 @@ def _make_server(trace: Trace | TraceHistory, port: int) -> ThreadingHTTPServer:
     server.allow_reuse_address = True
     server.daemon_threads = True
     return server
+
+
+def _find_trace(source: Trace | TraceHistory, trace_id: str) -> Trace | None:
+    """Resolve ``trace_id`` against a single trace or the retained history."""
+    if isinstance(source, TraceHistory):
+        return source.traces.get(trace_id)
+    return source if source.id == trace_id else None
+
+
+def _export_filename(trace: Trace) -> str:
+    """Slug the trace name into an ASCII download filename."""
+    slug = re.sub(r"[^a-z0-9]+", "-", trace.name.lower()).strip("-")[:60].strip("-")
+    return f"{slug or 'trace'}-pylier.html"
 
 
 def _try_open(url: str) -> None:
